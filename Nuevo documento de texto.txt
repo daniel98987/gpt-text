@@ -1,16 +1,15 @@
-/*CD_PETITION_TYPE
-CREDI = Credito individual (Banco)
-CCTI = Cuenta corriente individual (Banco)
-BRACT = RACT (Banco)
-CREDM = Credito masivo (Banco)
-CBSC = Subcapitalizacion (Banco)
-CCTM = Cuenta corriente masivo (Banco)
-CB = Retefuente (Banco)
+BEGIN
+    INSERT INTO TB_USER
+    VALUES
+    (1, 'zuluagca', 'Carlos Zuluaga', 203, GETDATE(), 1, '10.26.7.58', '10.26.7.58')
+    PRINT 'Usuario ingresado correctamente.'
+END
+ELSE
 
-DA = Diario (SCB)
-RS = Reproceso SWIFT (SCB)
-MO = Mensual (SCB)
-UR = Reporte utilidades (SCB)
-AN = Anual (SCB)
-RE = Reproceso mensual (SCB)
-*/
+BEGIN
+    UPDATE TB_USER
+    SET CD_STATUS = 1,
+        DT_LAST_MODIFICATION = GETDATE()
+    WHERE NM_USERNAME = 'zuluagca';
+    PRINT 'Usuario actualizado correctamente correctamente.'
+END
