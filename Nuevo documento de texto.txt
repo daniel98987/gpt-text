@@ -1,15 +1,23 @@
-BEGIN
-    INSERT INTO TB_USER
-    VALUES
-    (1, 'zuluagca', 'Carlos Zuluaga', 203, GETDATE(), 1, '10.26.7.58', '10.26.7.58')
-    PRINT 'Usuario ingresado correctamente.'
-END
-ELSE
-
-BEGIN
-    UPDATE TB_USER
-    SET CD_STATUS = 1,
-        DT_LAST_MODIFICATION = GETDATE()
-    WHERE NM_USERNAME = 'zuluagca';
-    PRINT 'Usuario actualizado correctamente correctamente.'
-END
+=IIF(
+    SWITCH(
+        Fields!TIPOTASA_PERIODICIDAD.Value = "MENSUAL", 1,
+        Fields!TIPOTASA_PERIODICIDAD.Value = "BIMENSUAL", 2,
+        Fields!TIPOTASA_PERIODICIDAD.Value = "TRIMESTRAL", 3,
+        Fields!TIPOTASA_PERIODICIDAD.Value = "CUATRIMESTRAL", 4,
+        Fields!TIPOTASA_PERIODICIDAD.Value = "SEMESTRAL", 5,
+        Fields!TIPOTASA_PERIODICIDAD.Value = "ANUAL", 6,
+        Fields!TIPOTASA_PERIODICIDAD.Value = "BULLET", 7
+    )
+    > 
+    SWITCH(
+        Fields!INDICADOR_PERIODICIDAD.Value = "IBR MENSUAL", 1,
+        Fields!INDICADOR_PERIODICIDAD.Value = "IBR BIMENSUAL", 2,
+        Fields!INDICADOR_PERIODICIDAD.Value = "IBR TRIMESTRAL", 3,
+        Fields!INDICADOR_PERIODICIDAD.Value = "IBR CUATRIMESTRAL", 4,
+        Fields!INDICADOR_PERIODICIDAD.Value = "IBR SEMESTRAL", 5,
+        Fields!INDICADOR_PERIODICIDAD.Value = "IBR ANUAL", 6,
+        Fields!INDICADOR_PERIODICIDAD.Value = "BULLET", 7
+    ),
+    true,  -- Ocultar si TIPOTASA_PERIODICIDAD es mayor
+    false -- Mostrar si TIPOTASA_PERIODICIDAD no es mayor
+)
