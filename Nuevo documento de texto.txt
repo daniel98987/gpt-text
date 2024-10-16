@@ -1,23 +1,27 @@
 =IIF(
-    SWITCH(
-        Fields!TIPOTASA_PERIODICIDAD.Value = "MENSUAL", 1,
-        Fields!TIPOTASA_PERIODICIDAD.Value = "BIMENSUAL", 2,
-        Fields!TIPOTASA_PERIODICIDAD.Value = "TRIMESTRAL", 3,
-        Fields!TIPOTASA_PERIODICIDAD.Value = "CUATRIMESTRAL", 4,
-        Fields!TIPOTASA_PERIODICIDAD.Value = "SEMESTRAL", 5,
-        Fields!TIPOTASA_PERIODICIDAD.Value = "ANUAL", 6,
-        Fields!TIPOTASA_PERIODICIDAD.Value = "BULLET", 7
+    First(Fields!TIPOTASA_PERIODICIDAD.Value, "dsDatosObligacion") = "IBR BULLET", 
+    false, -- Muestra si es "IBR BULLET"
+    IIF(
+        SWITCH(
+            First(Fields!TIPOTASA_PERIODICIDAD.Value, "dsDatosObligacion") = "IBR MENSUAL", 1,
+            First(Fields!TIPOTASA_PERIODICIDAD.Value, "dsDatosObligacion") = "IBR BIMENSUAL", 2,
+            First(Fields!TIPOTASA_PERIODICIDAD.Value, "dsDatosObligacion") = "IBR TRIMESTRAL", 3,
+            First(Fields!TIPOTASA_PERIODICIDAD.Value, "dsDatosObligacion") = "IBR CUATRIMESTRAL", 4,
+            First(Fields!TIPOTASA_PERIODICIDAD.Value, "dsDatosObligacion") = "IBR SEMESTRAL", 5,
+            First(Fields!TIPOTASA_PERIODICIDAD.Value, "dsDatosObligacion") = "IBR ANUAL", 6,
+            First(Fields!TIPOTASA_PERIODICIDAD.Value, "dsDatosObligacion") = "IBR BULLET", 7
+        )
+        >
+        SWITCH(
+            First(Fields!PERIODICIDAD_INDICADOR.Value, "dsDatosObligacion") = "IBR MENSUAL", 1,
+            First(Fields!PERIODICIDAD_INDICADOR.Value, "dsDatosObligacion") = "IBR BIMENSUAL", 2,
+            First(Fields!PERIODICIDAD_INDICADOR.Value, "dsDatosObligacion") = "IBR TRIMESTRAL", 3,
+            First(Fields!PERIODICIDAD_INDICADOR.Value, "dsDatosObligacion") = "IBR CUATRIMESTRAL", 4,
+            First(Fields!PERIODICIDAD_INDICADOR.Value, "dsDatosObligacion") = "IBR SEMESTRAL", 5,
+            First(Fields!PERIODICIDAD_INDICADOR.Value, "dsDatosObligacion") = "IBR ANUAL", 6,
+            First(Fields!PERIODICIDAD_INDICADOR.Value, "dsDatosObligacion") = "BULLET", 7
+        ),
+        false, -- Muestra si TIPOTASA_PERIODICIDAD es mayor que PERIODICIDAD_INDICADOR
+        true   -- Oculta si TIPOTASA_PERIODICIDAD no es mayor
     )
-    > 
-    SWITCH(
-        Fields!INDICADOR_PERIODICIDAD.Value = "IBR MENSUAL", 1,
-        Fields!INDICADOR_PERIODICIDAD.Value = "IBR BIMENSUAL", 2,
-        Fields!INDICADOR_PERIODICIDAD.Value = "IBR TRIMESTRAL", 3,
-        Fields!INDICADOR_PERIODICIDAD.Value = "IBR CUATRIMESTRAL", 4,
-        Fields!INDICADOR_PERIODICIDAD.Value = "IBR SEMESTRAL", 5,
-        Fields!INDICADOR_PERIODICIDAD.Value = "IBR ANUAL", 6,
-        Fields!INDICADOR_PERIODICIDAD.Value = "BULLET", 7
-    ),
-    true,  -- Ocultar si TIPOTASA_PERIODICIDAD es mayor
-    false -- Mostrar si TIPOTASA_PERIODICIDAD no es mayor
 )
