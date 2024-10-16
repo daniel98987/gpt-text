@@ -1,23 +1,16 @@
-=IIF(
-    SWITCH(
-        Fields!TIPOTASA_PERIODICIDAD.Value = "MENSUAL", 1,
-        Fields!TIPOTASA_PERIODICIDAD.Value = "BIMENSUAL", 2,
-        Fields!TIPOTASA_PERIODICIDAD.Value = "TRIMESTRAL", 3,
-        Fields!TIPOTASA_PERIODICIDAD.Value = "CUATRIMESTRAL", 4,
-        Fields!TIPOTASA_PERIODICIDAD.Value = "SEMESTRAL", 5,
-        Fields!TIPOTASA_PERIODICIDAD.Value = "ANUAL", 6,
-        Fields!TIPOTASA_PERIODICIDAD.Value = "BULLET", 7
-    )
-    > 
-    SWITCH(
-        Fields!INDICADOR_PERIODICIDAD.Value = "IBR MENSUAL", 1,
-        Fields!INDICADOR_PERIODICIDAD.Value = "IBR BIMENSUAL", 2,
-        Fields!INDICADOR_PERIODICIDAD.Value = "IBR TRIMESTRAL", 3,
-        Fields!INDICADOR_PERIODICIDAD.Value = "IBR CUATRIMESTRAL", 4,
-        Fields!INDICADOR_PERIODICIDAD.Value = "IBR SEMESTRAL", 5,
-        Fields!INDICADOR_PERIODICIDAD.Value = "IBR ANUAL", 6,
-        Fields!INDICADOR_PERIODICIDAD.Value = "BULLET", 7
-    ),
-    true,  -- Ocultar si TIPOTASA_PERIODICIDAD es mayor
-    false -- Mostrar si TIPOTASA_PERIODICIDAD no es mayor
-)
+/*CD_PETITION_TYPE
+CREDI = Credito individual (Banco)
+CCTI = Cuenta corriente individual (Banco)
+BRACT = RACT (Banco)
+CREDM = Credito masivo (Banco)
+CBSC = Subcapitalizacion (Banco)
+CCTM = Cuenta corriente masivo (Banco)
+CB = Retefuente (Banco)
+
+DA = Diario (SCB)
+RS = Reproceso SWIFT (SCB)
+MO = Mensual (SCB)
+UR = Reporte utilidades (SCB)
+AN = Anual (SCB)
+RE = Reproceso mensual (SCB)
+*/
