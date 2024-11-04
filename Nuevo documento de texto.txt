@@ -1,23 +1,1273 @@
-// INSTANCIAMIENTO DE CLASES
-DalCertificate dalCertificate = new DalCertificate();
-buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " - Buscando peticiones activas ", archivoLogGeneral);
+USE [dbBDC]
+GO
+/****** Object:  StoredProcedure [sta].[SpGetGenerateMonthlyAccount]    Script Date: 4/11/2024 9:12:59 a. m. ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
 
-// SE CONSULTAN LAS PETICIONES "NO" SIN PROCESAR - TABLA TB BUILD PETITION DE LA BD DBBDC_STATEMENT
-List<MonthlyPetition> listPeticiones = monthlyPetitionHandler.GetUnifiedMonthlyPetition();
+-----------------------------------------------------------------------------
+-- Nombre del Objeto:   [sta].[SpGetGenerateMonthlyAccount] 
+-- Autor:               Luis Felipe Aguirre Ramirez (SETI)
+-- Descripción:         Proceso que retorna las cuentas a las cuales se le van a generar extracto mensual,
+--                      para los productos aprobados y que no se encuentran bloqueados.
+-- Fecha Creación:      20/05/2016
+-- Fecha Modificación:  19/07/2016
+-- Modifica:			Luis Felipe Aguirre Ramirez (SETI)
+-- Descripcion:         Se adiciona filtro para enviar solo las cuentas que tenga el indicador de envio portafolio
+--                      activo
 
-// VERIFICAMOS SI TENEMOS PETICIONES PENDIENTES
-if (listPeticiones != null && listPeticiones.Count != 0)
-{
-    Program program = new Program();
+-- Modificado Por:		Carlos Zuluaga (SETI)
+-- Fecha:				02/11/2016
+-- Descripción:			Se controla para que la información de Cartera se devuelva con dos decimales
 
-    // SE RECORRE LA LISTA DE PETICIONES PENDIENTES POR PROCESAR
-    foreach (var petition in listPeticiones)
-    {
-        // VARIABLE UTILIZADA PARA SABER SI SE DEBE REACTIVAR LA PETICIÓN PARA QUE VUELVA A SER EJECUTADA POR EL ORQUESTADOR
-        bool blnReactivarPeticion = false;
+-- Modificado por:		Carlos Zuluaga (SETI)
+-- Fecha Modificación:	Noviembre 24 de 2016
+-- Descripción:			Se adiciona filtro CD_INDEX <> 'FSE ' para que no duplique los registros
 
-        // SE CAPTURA EL ID DE LA PETICIÓN
-        int idPeticion = petition.IdBuildPetition;
+-- Modificado por:		Luis Felipe Aguirre Ramirez (SETI)
+-- Fecha Modificación:	Diciembre 28 de 2016
+-- Descripción:			Se ajusta consulta visibilidad porducto cartera tal como esta en el procedimiento 
+--                      spGetCarteraClienteMovimientos.
 
-        // DETERMINA SI LA PETICIÓN ES MASIVA PORQUE EL CAMPO DE IDENTIFICACIÓN VIENE VACÍO O NULO
-        bool peticionMasiva = string.IsNullOrEmpty(petition.Cuentas);
+-- Modificado por:		Carlos Zuluaga (SETI)
+-- Fecha Modificación:	Marzo 1 de 2017
+-- Descripción:			En posiciones de renta fija se ajusta la consulta por la adición de dos columnas VIP.
+
+-- Modificado por:		Carlos Zuluaga (SETI)
+-- Fecha modificación:	22 de marzo de 2017
+-- Descripción:			Se filtra por estado de vigencia del movimiento (CD_TRADE_STATUS  = 'STLD') para RF y RV
+
+-- Modificado por:		Carlos Zuluaga (SETI)
+-- Fecha:				Abril 6 de 2017
+-- Descripción:			Se controla para cuando existen cuentas con rendimientos pero sin posiciones
+
+-- Modificado por:		Carlos Zuluaga (SETI)
+-- Descripción:			Se filtra por tipo de balance de la posición (CD_BALANCE_TYPE = ‘TRAD’) (posiciones vigentes) para fondos
+--						Se filtra por estado del movimiento (CD_TRADE_STATUS = 'STLD') (transacciones vigentes) para fondos
+-- Fecha:				26 de mayo de 2017
+
+-- Modificado por:		Carlos Zuluaga (SETI)
+-- Descripción:			Se filtra por tipo de balance de la posición (CD_BALANCE_TYPE = ‘TRAD’) (posiciones vigentes) para RF y RV
+-- Fecha:				29 de junio de 2017
+
+-- Modificado por:       Carlos Zuluaga (SETI)
+-- Fecha modificación:   11 de noviembre de 2017
+-- Descripción:          Se ajuste join con la tabla TB_PARTY_RELATIONSHIP_PRODUCT_SERVICE en posiciones de renta fija.
+--                       Ajuste para solución del caso de soporte #300-108504.
+
+-- Modificado por:       Carlos Zuluaga (SETI)
+-- Fecha modificación:   8 de mayo de 2018
+-- Descripción:          Si el cliente está INACTIVO y tiene saldo menor a un valor parametrizable (parametro SaldoInactivo)
+--                       y no tiene movimientos, no debe generarse en el masivo
+--                       Control de cambios clientes inactivos
+
+-- Modificado por:       Carlos Zuluaga (SETI)
+-- Fecha modificación:   11 de mayo de 2018
+-- Descripción:          Se ajuste join con la tabla TB_PARTY_RELATIONSHIP_PRODUCT_SERVICE en transacciones y operaciones por cumplir de renta fija.
+--                       Ajuste para solución del caso de soporte #300-124615.
+
+-- Modificado por:        Carlos Zuluaga (SETI)
+-- Fecha modificación:    1 de agosto de 2018
+-- Descripción:           Se incluyen transacciones de democratización para renta variable
+--                        Control de cambios Extractos (Democratización).
+
+-- Modificado por:		  Carlos Zuluaga (SETI)
+-- Fecha modificación:    Octubre 2 de 2019
+-- Descripción:           Se ajusta sp con temas existentes antes de automatización.
+
+-- Modificado por:		  Beatriz Consuegra (SETI)
+-- Fecha modificación:    Abril 22 de 2024
+-- Descripción:           Se eliminan los filtros para las cuentas bloqueadas. 
+
+
+-- Detalle parámetros:  
+--					  @PRODUCT_LIST_TABLE_AUX: Estructura tipo tabla que contiene la lista de productos aprobados.
+--					  @ID_ASSET_LIST_AUX: Lista de Fondos que fueron aprobados, incluye el id del padre y sus respectivos hijos.
+--					  @DT_START_DATE_AUX: Fecha Inicio del corte
+--					  @DT_END_DATE_AUX:   Fecha Fin Corte
+--                    @INT_REPROCESS_AUX: Indicador Filtro Consulta para reprocesos valor 0 por defecto generacion mensual, <> 0 reproceso
+
+-- Ejemplo de llamado: 
+/*declare @p1 dbo.Monthly_Produt_List_Type
+insert into @p1 values(N'6',N'2',N'3',N'5',N'4',N'7',N'8',N'9')
+
+exec sta.SpGetGenerateMonthlyAccount @PRODUCT_LIST_TABLE=@p1,@ID_ASSET_LIST='744, 745, 746, 747, 748, 749, 767, 768, 769, 770, 771, 772, 773, 774, 775, 776, 777, 778, 779, 780, 781, 782, 783, 784, 785, 786, 787, 788, 789, 790, 791, 792, 793, 794, 795, 796, 797, 798, 799, 800, 801, 802, 803, 804, 805, 806, 807, 808, 809, 810, 811, 812, 813, 814, 815, 816, 817, 818, 819, 820, 821, 822, 823, 823, 824, 825, 826, 827, 843, 844, 845, 846, 847, 848, 849, 850, 852, 861, 864, 875, 876, 877, 878, 879, 880, 881, 882, 885, 886, 887, 921, 975, 981, 1008, 1009, 1018, 1019, 1022, 1023, 1024, 1026, 1027, 1028, 1034, 1043, 1044, 1048, 1050, 1053, 1054, 1055, 1056, 1057, 1058, 1059, 1061, 1075, 1077, 1078, 1079, 1080, 1081, 1082, 1084, 1086, 1088, 1090, 1093, 1097, 1103, 1114, 1115, 1116, 1117, 1119, 1120, 1121, 1122, 1123, 1124, 1126, 1128, 1132',@DT_START_DATE='2023-10-01 00:00:00',@DT_END_DATE='2023-10-31 00:00:00',@INT_REPROCESS=0*/
+-----------------------------------------------------------------------------
+ALTER PROCEDURE [sta].[SpGetGenerateMonthlyAccount]
+	@PRODUCT_LIST_TABLE Monthly_Produt_List_Type READONLY,
+	@ID_ASSET_LIST  VARCHAR(max),
+	@DT_START_DATE	DATETIME ,
+	@DT_END_DATE	DATETIME ,
+	@INT_REPROCESS  INT = 0 
+AS
+BEGIN
+	SET NOCOUNT ON
+	DECLARE @PRODUCT_LIST_TABLE_AUX Monthly_Produt_List_Type,
+			@ID_ASSET_LIST_AUX  VARCHAR(max),
+			@DT_START_DATE_AUX	DATETIME ,
+			@DT_END_DATE_AUX DATETIME ,
+			@INT_REPROCESS_AUX  INT;
+
+			SET	@ID_ASSET_LIST_AUX = @ID_ASSET_LIST
+				SET @DT_START_DATE_AUX =@DT_START_DATE
+				SET @DT_END_DATE_AUX   =@DT_END_DATE
+				SET @INT_REPROCESS_AUX =@INT_REPROCESS;
+			
+			INSERT INTO @PRODUCT_LIST_TABLE_AUX
+			SELECT	*
+			FROM	@PRODUCT_LIST_TABLE
+			/*Crear tabla temporal para funcionalidad de extracto diario que contiene la fecha maxima para los fondos
+	  Asociados a una cuenta en un rango de fechas determinado sin filtar las trasferencias*/
+	CREATE TABLE #temp_accountfunds_lastposition_without_transfer(
+			ID_ACCOUNT		INT, 
+			ID_ASSET		INT,
+			ID_FUND_ENCARGO VARCHAR(10),
+			DT_BALANCE		DATETIME)
+
+	/*Crear tabla temporal para funcionalidad de extracto diario que contiene la fecha maxima para los fondos
+	 Asociados a una cuenta en un rango de fechas determinado*/
+	CREATE TABLE #temp_accountfunds_lastposition(
+		ID_ACCOUNT INT, 
+		ID_ASSET   INT,
+		ID_FUND_ENCARGO VARCHAR(10),
+		DT_BALANCE DATETIME)
+
+/*Crear tabla temporal para manejo de rendimientos*/
+	CREATE TABLE #temp_accountfunds_lastposition_Rendimientos(
+		ID_ACCOUNT		INT, 
+		ID_ASSET		INT,
+		ID_FUND_ENCARGO VARCHAR(10),
+		DT_BALANCE		DATETIME)
+	
+	--Tabla temporal posiciones renta fija
+	CREATE TABLE #tmp_posiciones_x_nominal_rf(
+		IdCuenta				int,    
+		IdTaxlot                int,
+		IdProductCategory       int,
+		IdAsset                 int,
+		EsActiva                int default 0)
+	
+	--tabla temporal posiciones renta fija titulos garantia
+	CREATE TABLE #tmp_garantias_rf(
+		IdAccount               int,
+		IdTaxlot                int,
+		IdProductCategory       int,
+		IdAsset                 int,
+		EsActiva                int default 0)		
+		
+	--Tabla temporal para almacenar las cuentas con sus productos por fila
+	CREATE TABLE #temp_account_products_x_row(
+		ID_ACCOUNT			int,
+		ID_PRODUCT_CATEGORY int)
+
+	-- tabla para trasponer las cuentas y colocar los porductos por columnas
+	CREATE TABLE #temp_account_products_x_column(
+		ID_ACCOUNT				int,
+		ID_RENTA_FIJA			int,
+        ID_RENTA_VARIABLE		int,
+		ID_FONDOS				int,
+		ID_OPERACIONES_LIQUIDEZ int,
+		ID_DERIVADOS			int,
+		ID_DIVISAS              int,
+		ID_CUENTAS_MARGEN		int,
+		ID_CARTERA				int)
+
+	--tabla que almacena el lista en enviada en el parametro @ID_ASSET_LIST_AUX despues de invocar la funcion sta.CSVToTable
+	CREATE TABLE #temp_funds_approved(
+		ID_ASSET	int)
+	
+	--tabla que almacena las cuentas que tienen el mercado de fondos, pero no todos han sido aprobados
+	CREATE TABLE #temp_funds_pending_approved(
+		ID_ACCOUNT			int)
+
+	--tabla que almacena todas las cuentas cuyos productos han sido aprovados en su totalidad, que no han sido bloqueadas y
+	--no se ha generado su extracto mensual.
+	CREATE TABLE #temp_Generate_Monthly_Account(
+		ID_ACCOUNT	int)
+	
+	--tabla que almacena todas las cuentas cuyos productos han sido aprovados en su totalidad excluyendo las cuentas a las cuales 
+	-- ya se les genero extracto durante el mes 
+	CREATE TABLE #temp_Monthly_Account_without_generating(
+		ID_ACCOUNT	int)
+										
+	-- constantes
+	DECLARE @strMsg						varchar(500),
+	        @STATE_CREATED              SMALLINT	= 1,
+			@ID_RENTA_FIJA				INT			= 2,
+			@ID_RENTA_VARIABLE			INT			= 3,
+			@ID_OPERACIONES_LIQUIDEZ	INT			= 5,
+			@ID_DERIVADOS				INT			= 4,
+			@ID_CUENTAS_MARGEN			INT			= 8,
+			@ID_DIVISAS					INT			= 7,
+			@ID_CARTERA					INT			= 9,
+			@ID_FONDOS					INT			= 6,
+			@CD_BLOCK_STATUS_OYD        VARCHAR(4)	= 'BLTO',
+			@ES_SEND_PORTFOLIO          CHAR(1)		= '1',
+			@NM_ASSET_NAME				VARCHAR(350) = 'COP',		-- Nombre de la moneda en la que se presenta la garantia
+			@CD_BUCKET_TYPE				CHAR(4)		= 'MOU1', 		-- Tipo Garantia derivados ver maestro enumerations	
+			@CD_BUCKET_TYPE_CM			CHAR(4)		= 'MOU2',		-- Tipo Garantia Cuenta  de margen ver maestro enumerations	
+			@CD_BUCKET_TYPE_REPO_RF		CHAR(4)		= 'MOU3',  		-- Tipo Garantia Repo Renta Fija ver maestro enumerations	
+			@CD_BUCKET_TYPE_REPO_RV		CHAR(4)		= 'MOU4',		-- Tipo Garantia Repo Renta Variable ver maestro enumerations
+			@CD_BUCKET_TYPE_SIMU		CHAR(4)		= 'MOU5',		-- Tipo Garantia Simultanea ver maestro enumerations
+			@CD_BUCKET_TYPE_TTV_RF		CHAR(4)		= 'MOU6',		-- Tipo Garantia TTV Renta Fija ver maestro enumerations
+			@CD_BUCKET_TYPE_TTV_RV		CHAR(4)		= 'MOU7'		-- Tipo Garantia TTV Renta Variable ver maestro enumerations
+
+	BEGIN TRY
+		
+		-- Renta Fija
+		--Validar cada una de las secciones del extracto para renta fija, en caso de que alguna retorne informacion 
+		--se retorna la cuenta.
+
+		INSERT INTO #tmp_posiciones_x_nominal_rf(
+						IdCuenta,
+						IdTaxlot,
+						IdProductCategory,
+						IdAsset)
+		SELECT 	t.ID_ACCOUNT            Cuenta,
+				t.ID_TAXLOT				IdTaxlot,
+				t.ID_PRODUCT_CATEGORY	IdProductCategory,
+				t.ID_ASSET              IdAsset	
+		FROM ODS.SECURITIES_BALANCE_TAX_LOT t WITH(NOLOCK)
+			INNER JOIN  ODS.ASSET a									WITH(NOLOCK)
+				ON (a.ID_ASSET = t.ID_ASSET AND
+					a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY) 
+			INNER JOIN COL.TB_ISSUER p								WITH(NOLOCK)
+				ON (p.ID_COMMON_IDENTIFICATION = a.ID_ISSUER_ROLE)
+			INNER JOIN ODS.ASSET_IDENTIFICATION i					WITH(NOLOCK)
+				ON (i.ID_ASSET = t.ID_ASSET AND
+					i.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY AND
+					i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO') 
+			INNER JOIN ODS.ASSET_HOLDING nomi						WITH(NOLOCK)
+				ON (nomi.ID_TAXLOT = t.ID_TAXLOT AND
+					nomi.DT_BALANCE = t.DT_BALANCE AND
+					nomi.CD_PRICE_TYPE='NOGR' AND
+					nomi.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.ASSET_HOLDING prmp							WITH(NOLOCK)
+				ON (prmp.ID_TAXLOT = t.ID_TAXLOT AND
+					prmp.DT_BALANCE = t.DT_BALANCE AND
+					prmp.CD_PRICE_TYPE='PRMP' AND
+					prmp.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			LEFT JOIN ODS.ASSET_HOLDING lnpv							WITH(NOLOCK)
+				ON (lnpv.ID_TAXLOT = t.ID_TAXLOT AND
+					lnpv.DT_BALANCE = t.DT_BALANCE AND
+					lnpv.CD_PRICE_TYPE='LNPV' AND
+					lnpv.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			LEFT JOIN ODS.ASSET_HOLDING inpv							WITH(NOLOCK)
+				ON (inpv.ID_TAXLOT = t.ID_TAXLOT AND
+					inpv.DT_BALANCE = t.DT_BALANCE AND
+					inpv.CD_PRICE_TYPE='INPV' AND
+					inpv.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.DEBT d										WITH(NOLOCK)
+				ON (d.ID_ASSET = a.ID_ASSET AND 
+					d.ID_PRODUCT_CATEGORY = a.ID_PRODUCT_CATEGORY)
+			INNER JOIN (select distinct ID_ACCOUNT from  LE.TB_PARTY_RELATIONSHIP_PRODUCT_SERVICE
+					    where CD_ASSET_CLASSIFICATION != '2. Cuenta de Margen') ps    
+                ON (ps.ID_ACCOUNT = t.ID_ACCOUNT)
+		WHERE t.DT_BALANCE  = @DT_END_DATE_AUX AND
+			  t.ID_PRODUCT_CATEGORY = @ID_RENTA_FIJA AND
+			  t.DS_COL_BLOCK_REASON != 'Simu Activo' AND
+			  d.CD_INDEX <> 'FSE ' AND ISNULL(t.CD_BALANCE_TYPE, 'TRAD') = 'TRAD'
+		
+		UPDATE x
+		SET  EsActiva = (SELECT 
+							CASE WHEN COUNT(1) > 0 THEN 1 ELSE 0 END)		
+		FROM #tmp_posiciones_x_nominal_rf x
+			INNER JOIN ODS.SECURITIES_ENTRY st
+				ON (st.ID_TAXLOT = x.IdTaxlot AND
+				    st.ID_PRODUCT_CATEGORY = x.IdProductCategory AND
+					st.ID_ASSET = x.IdAsset AND
+					st.DT_BALANCE = @DT_END_DATE_AUX)
+			INNER JOIN ODS.TRADE t 
+				ON (t.ID_TRADE = st.ID_TRADE AND
+				    t.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY AND
+				   (t.DS_COMMENTS = 'Simultanea Activa' OR t.DS_COMMENTS = 'Simul CRCC Activa')
+				   AND t.CD_TRADE_STATUS = 'STLD')
+
+
+		INSERT INTO #temp_account_products_x_row (ID_ACCOUNT,ID_PRODUCT_CATEGORY)
+		SELECT y.IdCuenta,y.IdProductCategory
+		FROM #tmp_posiciones_x_nominal_rf y
+		WHERE EsActiva = 0
+		GROUP BY y.IdCuenta,y.IdProductCategory
+		
+		 -- Validacion movimientos renta fija
+		INSERT INTO #temp_account_products_x_row (ID_ACCOUNT,ID_PRODUCT_CATEGORY)
+		SELECT CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
+		       t.ID_PRODUCT_CATEGORY 
+		FROM ODS.TRADE t	WITH(NOLOCK)
+			INNER JOIN  COL.SETTLEMENT_TRADE st WITH(NOLOCK)
+				ON (st.ID_TRADE = T.ID_TRADE AND
+					st.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN  ODS.ASSET a	WITH(NOLOCK)
+				ON (a.ID_ASSET = t.ID_ASSET AND
+				    a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.ASSET_IDENTIFICATION i WITH(NOLOCK)
+				ON (i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO' AND
+					i.ID_ASSET = a.ID_ASSET AND
+					i.ID_PRODUCT_CATEGORY = a.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.SECURITIES_TRADE s WITH(NOLOCK)
+				ON (s.ID_TRADE = t.ID_TRADE AND 
+					s.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.DEBT d WITH(NOLOCK)
+				ON (d.ID_ASSET = a.ID_ASSET AND 
+					d.ID_PRODUCT_CATEGORY = a.ID_PRODUCT_CATEGORY)
+			INNER JOIN (select distinct ID_ACCOUNT from  LE.TB_PARTY_RELATIONSHIP_PRODUCT_SERVICE
+					    where CD_ASSET_CLASSIFICATION <> '2. Cuenta de Margen') ps    
+                ON (ps.ID_ACCOUNT = t.CD_PARTY_ACCOUNT)
+		WHERE t.ID_PRODUCT_CATEGORY = @ID_RENTA_FIJA		
+		AND   st.CD_CLASS_ORDER = 'C' 
+		AND   st.CD_TYPE_OFFER = 'N' 
+		AND ((t.DH_TRADE BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX and s.DT_REQ_SEC_SETTLEMENT <= @DT_END_DATE_AUX) OR
+					   (s.DT_REQ_SEC_SETTLEMENT BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX))  
+		AND d.CD_INDEX <> 'FSE ' AND t.CD_TRADE_STATUS = 'STLD'
+		GROUP BY t.CD_PARTY_ACCOUNT,t.ID_PRODUCT_CATEGORY
+
+		-- Validacion titulos garantia renta fija
+		INSERT INTO #tmp_garantias_rf (
+					IdAccount,
+					IdTaxlot,
+					IdProductCategory,
+					IdAsset)
+		SELECT  t.ID_ACCOUNT												IdAccount,
+				t.ID_TAXLOT													IdTaxlot,
+				t.ID_PRODUCT_CATEGORY										IdProductCategory,
+				t.ID_ASSET                                                  IdAsset 	
+		FROM ODS.SECURITIES_BALANCE_TAX_LOT t	WITH(NOLOCK)
+			INNER JOIN  ODS.ASSET a		WITH(NOLOCK)
+				ON (a.ID_ASSET = t.ID_ASSET AND
+					a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)	
+			INNER JOIN COL.TB_ISSUER p		WITH(NOLOCK)
+				ON (p.ID_COMMON_IDENTIFICATION = a.ID_ISSUER_ROLE)
+			INNER JOIN ODS.ASSET_IDENTIFICATION i	WITH(NOLOCK)
+				ON (i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO' AND
+				    i.ID_ASSET = t.ID_ASSET AND
+					i.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.ASSET_HOLDING nomi	WITH(NOLOCK)
+				ON (nomi.CD_PRICE_TYPE='NOGR' AND
+					nomi.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY AND
+				    nomi.ID_TAXLOT = t.ID_TAXLOT AND
+					nomi.DT_BALANCE = t.DT_BALANCE)
+			INNER JOIN ODS.ASSET_HOLDING prmp	WITH(NOLOCK)
+				ON (prmp.CD_PRICE_TYPE='PRMP' AND
+					prmp.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY AND
+				    prmp.ID_TAXLOT = t.ID_TAXLOT AND
+					prmp.DT_BALANCE = t.DT_BALANCE)
+			INNER JOIN ODS.DEBT d		WITH(NOLOCK)
+				ON (d.ID_ASSET = a.ID_ASSET AND 
+					d.ID_PRODUCT_CATEGORY = a.ID_PRODUCT_CATEGORY)
+			INNER JOIN LE.TB_PARTY_RELATIONSHIP_PRODUCT_SERVICE ps  WITH(NOLOCK)
+				ON (ps.CD_ASSET_CLASSIFICATION != '2. Cuenta de Margen' AND
+					ps.ID_ACCOUNT = t.ID_ACCOUNT)
+		WHERE t.DT_BALANCE =@DT_END_DATE_AUX 
+		AND   t.ID_PRODUCT_CATEGORY = 2
+		AND   (t.DS_COL_BLOCK_REASON IS NOT NULL AND RTRIM(LTRIM(t.DS_COL_BLOCK_REASON)) != '')
+		AND   t.DS_COL_BLOCK_REASON != 'Simu Activo'
+		AND d.CD_INDEX <> 'FSE ' AND ISNULL(t.CD_BALANCE_TYPE, 'TRAD') = 'TRAD'
+				
+		UPDATE x
+		SET  EsActiva = (SELECT 
+							CASE WHEN COUNT(1) > 0 THEN 1 ELSE 0 END)		
+		FROM #tmp_garantias_rf x
+			INNER JOIN ODS.SECURITIES_ENTRY st WITH(NOLOCK)
+				ON (st.ID_TAXLOT = x.IdTaxlot AND
+				    st.ID_PRODUCT_CATEGORY = x.IdProductCategory AND
+					st.ID_ASSET = x.IdAsset AND
+					st.DT_BALANCE = @DT_END_DATE_AUX)
+			INNER JOIN ODS.TRADE t WITH(NOLOCK)
+				ON (t.ID_TRADE = st.ID_TRADE AND
+				    t.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY AND
+				   (t.DS_COMMENTS = 'Simultanea Activa' OR t.DS_COMMENTS = 'Simul CRCC Activa')
+				   AND t.CD_TRADE_STATUS = 'STLD')
+		
+		INSERT INTO #temp_account_products_x_row (ID_ACCOUNT,ID_PRODUCT_CATEGORY)		
+		SELECT t.IdAccount,t.IdProductCategory
+		FROM #tmp_garantias_rf t
+		WHERE t.EsActiva = 0
+		GROUP BY t.IdAccount,t.IdProductCategory
+		
+		-- Validacion operaciones pendientes por cumplir renta fija
+		INSERT INTO #temp_account_products_x_row (ID_ACCOUNT,ID_PRODUCT_CATEGORY)
+		SELECT CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
+		       t.ID_PRODUCT_CATEGORY  
+		FROM ODS.TRADE t	WITH(NOLOCK)
+			INNER JOIN  COL.SETTLEMENT_TRADE st WITH(NOLOCK)
+				ON (st.ID_TRADE = T.ID_TRADE AND
+					st.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.ASSET a WITH(NOLOCK)
+				ON ( a.ID_ASSET = t.ID_ASSET AND
+					 a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.ASSET_IDENTIFICATION i WITH(NOLOCK)
+				ON (i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO' AND
+					i.ID_ASSET = a.ID_ASSET AND
+					i.ID_PRODUCT_CATEGORY = a.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.SECURITIES_TRADE s WITH(NOLOCK)
+				ON (s.ID_TRADE = t.ID_TRADE AND 
+					s.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.DEBT d	WITH(NOLOCK)
+				ON (d.ID_ASSET = a.ID_ASSET AND 
+					d.ID_PRODUCT_CATEGORY = a.ID_PRODUCT_CATEGORY)
+			INNER JOIN (select distinct ID_ACCOUNT from  LE.TB_PARTY_RELATIONSHIP_PRODUCT_SERVICE
+					    where CD_ASSET_CLASSIFICATION <> '2. Cuenta de Margen') ps    
+                ON (ps.ID_ACCOUNT = t.CD_PARTY_ACCOUNT)
+		WHERE t.ID_PRODUCT_CATEGORY = @ID_RENTA_FIJA
+		AND   t.DH_TRADE BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX
+		AND   st.CD_CLASS_ORDER = 'C' 
+		AND   st.CD_TYPE_OFFER  = 'N' 
+		AND   s.DT_REQ_SEC_SETTLEMENT > @DT_END_DATE_AUX
+		AND  d.CD_INDEX <> 'FSE ' AND t.CD_TRADE_STATUS = 'STLD'
+		GROUP BY t.CD_PARTY_ACCOUNT,t.ID_PRODUCT_CATEGORY
+
+		--cuentas con posicion de renta variable al corte
+		INSERT INTO #temp_account_products_x_row (ID_ACCOUNT,ID_PRODUCT_CATEGORY)
+		SELECT 
+			t.ID_ACCOUNT,
+			t.ID_PRODUCT_CATEGORY
+		FROM ODS.SECURITIES_BALANCE_TAX_LOT t WITH(NOLOCK)
+			INNER JOIN  ODS.ASSET a										WITH(NOLOCK)
+				ON (a.ID_ASSET = t.ID_ASSET AND
+					a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY) 
+			INNER JOIN COL.TB_ISSUER p									WITH(NOLOCK)
+				ON (p.ID_COMMON_IDENTIFICATION = a.ID_ISSUER_ROLE)
+			INNER JOIN ODS.ASSET_IDENTIFICATION i						WITH(NOLOCK)
+				ON (i.ID_ASSET = t.ID_ASSET AND
+					i.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY AND
+					i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO')
+			INNER JOIN ODS.ASSET_HOLDING nomi							WITH(NOLOCK)
+				ON (nomi.ID_TAXLOT = t.ID_TAXLOT AND
+					nomi.DT_BALANCE = t.DT_BALANCE AND
+					nomi.CD_PRICE_TYPE='NOGR' AND
+					nomi.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.ASSET_HOLDING prmp							WITH(NOLOCK)
+				ON (prmp.ID_TAXLOT = t.ID_TAXLOT AND
+					prmp.DT_BALANCE = t.DT_BALANCE AND
+					prmp.CD_PRICE_TYPE='PRMP' AND
+					prmp.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+		WHERE t.DT_BALANCE  =  @DT_END_DATE_AUX AND
+			  t.ID_PRODUCT_CATEGORY = @ID_RENTA_VARIABLE AND
+			  t.DS_COL_BLOCK_REASON <> 'Repo Activo' AND ISNULL(t.CD_BALANCE_TYPE, 'TRAD') = 'TRAD'
+		GROUP BY t.ID_ACCOUNT,t.ID_PRODUCT_CATEGORY
+
+		 -- Validacion movimientos renta variable
+		INSERT INTO #temp_account_products_x_row (ID_ACCOUNT,ID_PRODUCT_CATEGORY)
+		SELECT  CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
+		        t.ID_PRODUCT_CATEGORY  
+		FROM ODS.TRADE t WITH(NOLOCK)
+			INNER JOIN  COL.SETTLEMENT_TRADE st WITH(NOLOCK)
+					ON (st.ID_TRADE = T.ID_TRADE AND
+					    st.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.ASSET a	WITH(NOLOCK)
+					ON (a.ID_ASSET = t.ID_ASSET AND
+					    a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.ASSET_IDENTIFICATION i WITH(NOLOCK)
+					ON (i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO' AND
+						i.ID_ASSET = a.ID_ASSET AND
+						i.ID_PRODUCT_CATEGORY = a.ID_PRODUCT_CATEGORY)	
+			INNER JOIN ODS.SECURITIES_TRADE s WITH(NOLOCK)
+					ON (s.ID_TRADE = t.ID_TRADE AND 
+						s.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+		WHERE t.ID_PRODUCT_CATEGORY= @ID_RENTA_VARIABLE AND				
+				st.CD_CLASS_ORDER = 'A' AND
+				st.CD_TYPE_OFFER IN ('N','P', 'D')
+				AND ((t.DH_TRADE BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX and s.DT_REQ_SEC_SETTLEMENT <= @DT_END_DATE_AUX) OR
+					   (s.DT_REQ_SEC_SETTLEMENT BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX))  
+				AND t.CD_TRADE_STATUS = 'STLD'
+		GROUP BY t.CD_PARTY_ACCOUNT,t.ID_PRODUCT_CATEGORY
+		
+		-- Validacion titulos garantia renta variable
+		INSERT INTO #temp_account_products_x_row (ID_ACCOUNT,ID_PRODUCT_CATEGORY)
+		SELECT  t.ID_ACCOUNT,
+				t.ID_PRODUCT_CATEGORY
+		FROM ODS.SECURITIES_BALANCE_TAX_LOT t	WITH(NOLOCK)
+			INNER JOIN  ODS.ASSET a				WITH(NOLOCK)
+				ON (a.ID_ASSET = t.ID_ASSET AND
+					a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY) 
+			INNER JOIN COL.TB_ISSUER p			WITH(NOLOCK)
+				ON (p.ID_COMMON_IDENTIFICATION = a.ID_ISSUER_ROLE)
+			INNER JOIN ODS.ASSET_IDENTIFICATION i	WITH(NOLOCK)
+				ON (i.ID_ASSET = t.ID_ASSET AND
+					i.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY AND
+					i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO')
+			INNER JOIN ODS.ASSET_HOLDING nomi	WITH(NOLOCK)
+				ON (nomi.ID_TAXLOT = t.ID_TAXLOT AND
+					nomi.DT_BALANCE = t.DT_BALANCE AND
+					nomi.CD_PRICE_TYPE='NOGR' AND
+				    nomi.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.ASSET_HOLDING prmp	WITH(NOLOCK)
+			    ON (prmp.ID_TAXLOT = t.ID_TAXLOT AND
+				    prmp.DT_BALANCE = t.DT_BALANCE AND
+					prmp.CD_PRICE_TYPE='PRMP' AND
+			        prmp.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+		WHERE t.DT_BALANCE = @DT_END_DATE_AUX
+		AND   t.ID_PRODUCT_CATEGORY = @ID_RENTA_VARIABLE
+		AND   (t.DS_COL_BLOCK_REASON IS NOT NULL AND ltrim(rtrim(t.DS_COL_BLOCK_REASON)) <>'')
+		AND   t.DS_COL_BLOCK_REASON <>'Repo Activo' AND ISNULL(t.CD_BALANCE_TYPE,'TRAD') = 'TRAD'
+		GROUP BY t.ID_ACCOUNT,t.ID_PRODUCT_CATEGORY
+		
+		-- Validacion operaciones pendientes por cumplir renta variable
+		INSERT INTO #temp_account_products_x_row (ID_ACCOUNT,ID_PRODUCT_CATEGORY)
+		SELECT  CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
+		        t.ID_PRODUCT_CATEGORY 
+		FROM  ODS.TRADE t	WITH(NOLOCK)
+			INNER JOIN  COL.SETTLEMENT_TRADE st WITH(NOLOCK)
+				ON (st.ID_TRADE = T.ID_TRADE AND
+					st.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.ASSET a	WITH(NOLOCK)
+				ON (a.ID_ASSET = t.ID_ASSET AND
+				    a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.ASSET_IDENTIFICATION i WITH(NOLOCK)
+				ON (i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO' AND
+					i.ID_ASSET = a.ID_ASSET AND
+					i.ID_PRODUCT_CATEGORY = a.ID_PRODUCT_CATEGORY)	
+			INNER JOIN ODS.SECURITIES_TRADE s WITH(NOLOCK)
+				ON (s.ID_TRADE = t.ID_TRADE AND 
+					s.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+		WHERE t.ID_PRODUCT_CATEGORY = @ID_RENTA_VARIABLE AND
+			  t.DH_TRADE BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX AND
+			  st.CD_CLASS_ORDER = 'A' AND
+			  st.CD_TYPE_OFFER IN ('N','P', 'D') AND
+		      s.CD_SIDE in ('BUYI','SELL') AND
+			  s.DT_REQ_SEC_SETTLEMENT > @DT_END_DATE_AUX AND 
+			  t.CD_TRADE_STATUS = 'STLD'
+		GROUP BY t.CD_PARTY_ACCOUNT,t.ID_PRODUCT_CATEGORY
+
+		--cuentas con posicion de operaciones de liquidez al corte
+		INSERT INTO #temp_account_products_x_row
+		SELECT 
+			CONVERT(INT,t.CD_PARTY_ACCOUNT), 
+			@ID_OPERACIONES_LIQUIDEZ ID_PRODUCT_CATEGORY
+		FROM ODS.SECURITIES_FINANCING sf WITH(NOLOCK)
+			INNER JOIN ODS.TRADE t		 WITH(NOLOCK)
+				ON (t.ID_TRADE = sf.ID_TRADE AND
+					t.ID_PRODUCT_CATEGORY = sf.ID_PRODUCT_CATEGORY)
+		WHERE	sf.ID_PRODUCT_CATEGORY IN (@ID_RENTA_FIJA,@ID_RENTA_VARIABLE)
+				AND		sf.CD_TYPE IN ('SIMU','REPO','TTVS')
+				AND		sf.DH_TERMINATION > @DT_END_DATE_AUX		
+				AND		sf.DT_OPEN_SETT <= @DT_END_DATE_AUX	
+				AND		t.CD_TRADE_STATUS = 'STLD'
+		GROUP BY t.CD_PARTY_ACCOUNT
+
+		--cuentas con garantias en operaciones de liquidez
+		INSERT INTO #temp_account_products_x_row
+		SELECT  b.ID_ACCOUNT			 ID_ACCOUNT,
+		        @ID_OPERACIONES_LIQUIDEZ ID_PRODUCT_CATEGORY
+		FROM ODS.SECURITIES_BALANCE_BUCKET b WITH(NOLOCK)
+			INNER JOIN ODS.ASSET a			 WITH(NOLOCK)
+				ON (a.NM_ASSET_NAME = @NM_ASSET_NAME AND
+					a.ID_PRODUCT_CATEGORY = b.ID_PRODUCT_CATEGORY)
+		WHERE	b.DT_BALANCE = @DT_END_DATE_AUX AND
+				b.CD_BUCKET_TYPE IN (@CD_BUCKET_TYPE_REPO_RF,@CD_BUCKET_TYPE_REPO_RV, 
+									 @CD_BUCKET_TYPE_SIMU,@CD_BUCKET_TYPE_TTV_RF,	
+									 @CD_BUCKET_TYPE_TTV_RV) AND
+				b.ID_PRODUCT_CATEGORY = @ID_DIVISAS AND
+				b.VL_BALANCE != 0
+		GROUP BY b.ID_ACCOUNT
+
+		--validacion movimientos repos
+		INSERT INTO #temp_account_products_x_row
+		SELECT  CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
+				@ID_OPERACIONES_LIQUIDEZ ID_PRODUCT_CATEGORY
+		FROM  ODS.TRADE t	WITH(NOLOCK)
+			INNER JOIN COL.SETTLEMENT_TRADE stt WITH(NOLOCK)
+				ON (stt.ID_TRADE = t.ID_TRADE AND
+					stt.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.SECURITIES_TRADE st	WITH(NOLOCK)
+				ON (st.ID_TRADE = t.ID_TRADE AND
+					st.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+		WHERE t.ID_PRODUCT_CATEGORY IN (@ID_RENTA_FIJA,@ID_RENTA_VARIABLE)	AND			  
+			  stt.CD_CLASS_ORDER  = 'C'		AND
+			  stt.CD_TYPE_OFFER   = 'A'		
+			  AND ((t.DH_TRADE BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX) OR
+					   (st.DT_REQ_SEC_SETTLEMENT BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX)) 
+			  AND t.CD_TRADE_STATUS = 'STLD'
+		GROUP BY t.CD_PARTY_ACCOUNT
+		
+		--validacion movimientos simultaneas
+		INSERT INTO #temp_account_products_x_row
+		SELECT  CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
+				@ID_OPERACIONES_LIQUIDEZ ID_PRODUCT_CATEGORY
+		FROM  ODS.TRADE t WITH(NOLOCK)
+			INNER JOIN COL.SETTLEMENT_TRADE stt WITH(NOLOCK)
+				ON (stt.ID_TRADE = t.ID_TRADE AND
+					stt.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.SECURITIES_TRADE st	WITH(NOLOCK)
+				ON (st.ID_TRADE = t.ID_TRADE AND
+					st.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+		WHERE t.ID_PRODUCT_CATEGORY IN (@ID_RENTA_FIJA,@ID_RENTA_VARIABLE)	AND 				
+				stt.CD_CLASS_ORDER  = 'C'					AND
+				stt.CD_TYPE_OFFER   IN ('1','2','5','6')	
+				AND ((t.DH_TRADE BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX) OR
+					   (st.DT_REQ_SEC_SETTLEMENT BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX)) 
+				AND t.CD_TRADE_STATUS = 'STLD'
+		GROUP BY t.CD_PARTY_ACCOUNT
+
+		--validacion movimientos ttvs renta fija
+		INSERT INTO #temp_account_products_x_row
+		SELECT  CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
+				@ID_OPERACIONES_LIQUIDEZ ID_PRODUCT_CATEGORY
+		FROM  ODS.TRADE t WITH(NOLOCK)
+			INNER JOIN  COL.SETTLEMENT_TRADE stt WITH(NOLOCK)
+				ON (stt.ID_TRADE = T.ID_TRADE AND
+					stt.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.SECURITIES_TRADE st WITH(NOLOCK)
+				ON (st.ID_TRADE = t.ID_TRADE AND
+					st.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+		WHERE t.ID_PRODUCT_CATEGORY = @ID_RENTA_FIJA		
+		AND stt.CD_CLASS_ORDER = 'C' 
+		AND stt.CD_TYPE_OFFER IN ('3','4')
+		AND ((t.DH_TRADE BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX) OR
+					   (st.DT_REQ_SEC_SETTLEMENT BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX)) 
+		AND t.CD_TRADE_STATUS = 'STLD'
+		GROUP BY t.CD_PARTY_ACCOUNT
+
+		--validacion movimientos ttvs renta variable
+		INSERT INTO #temp_account_products_x_row
+		SELECT  CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
+				@ID_OPERACIONES_LIQUIDEZ ID_PRODUCT_CATEGORY	
+		FROM  ODS.TRADE t WITH(NOLOCK)
+			INNER JOIN  COL.SETTLEMENT_TRADE stt WITH(NOLOCK)
+				ON (stt.ID_TRADE = T.ID_TRADE AND
+					stt.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.SECURITIES_TRADE st WITH(NOLOCK)
+				ON (st.ID_TRADE = t.ID_TRADE AND
+					st.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+		WHERE t.ID_PRODUCT_CATEGORY = @ID_RENTA_VARIABLE	AND				
+				stt.CD_CLASS_ORDER = 'C'					AND
+				stt.CD_TYPE_OFFER IN ('3','4')				
+				AND ((t.DH_TRADE BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX) OR
+					   (st.DT_REQ_SEC_SETTLEMENT BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX)) 
+				AND t.CD_TRADE_STATUS = 'STLD'
+		GROUP BY t.CD_PARTY_ACCOUNT
+
+		--cuentas con posicion de derivados al corte
+		INSERT INTO #temp_account_products_x_row
+		SELECT 
+			t.ID_ACCOUNT,
+			t.ID_PRODUCT_CATEGORY
+		FROM ODS.SECURITIES_BALANCE_TAX_LOT t	WITH(NOLOCK)
+			INNER JOIN ODS.ASSET a				WITH(NOLOCK)
+				ON (a.ID_ASSET = t.ID_ASSET AND
+					a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)	
+			INNER JOIN ODS.ASSET_IDENTIFICATION i	WITH(NOLOCK)
+				ON (i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO' AND
+					i.ID_ASSET = a.ID_ASSET AND
+					i.ID_PRODUCT_CATEGORY = a.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.ASSET_HOLDING prmp	WITH(NOLOCK)
+				ON (prmp.ID_TAXLOT = t.ID_TAXLOT AND
+					prmp.DT_BALANCE = t.DT_BALANCE AND
+					prmp.CD_PRICE_TYPE='PRMP' AND
+					prmp.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+		WHERE   t.DT_BALANCE = @DT_END_DATE_AUX AND
+				t.ID_PRODUCT_CATEGORY = @ID_DERIVADOS AND
+				t.QT_SEC_BALANCE != 0
+		GROUP BY t.ID_ACCOUNT,t.ID_PRODUCT_CATEGORY
+
+		--cuentas con garantias de derivados al corte
+		INSERT INTO #temp_account_products_x_row
+		SELECT  b.ID_ACCOUNT	ID_ACCOUNT,
+				@ID_DERIVADOS	ID_PRODUCT_CATEGORY
+		FROM ODS.SECURITIES_BALANCE_BUCKET b WITH(NOLOCK)
+			INNER JOIN ODS.ASSET a			 WITH(NOLOCK)
+				ON (a.NM_ASSET_NAME = @NM_ASSET_NAME AND
+					a.ID_PRODUCT_CATEGORY = b.ID_PRODUCT_CATEGORY)
+		WHERE	b.DT_BALANCE = @DT_END_DATE_AUX AND
+				b.CD_BUCKET_TYPE = @CD_BUCKET_TYPE	AND
+				b.ID_PRODUCT_CATEGORY = @ID_DIVISAS AND
+				b.VL_BALANCE != 0	
+		GROUP BY b.ID_ACCOUNT
+
+		--validacion movimientos derivados
+		INSERT INTO #temp_account_products_x_row
+		SELECT  CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
+				t.ID_PRODUCT_CATEGORY
+		FROM ODS.TRADE t	WITH(NOLOCK)
+			INNER JOIN  ODS.ASSET a WITH(NOLOCK)
+				ON (a.ID_ASSET = t.ID_ASSET AND
+					a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)	
+			INNER JOIN ODS.ASSET_IDENTIFICATION i WITH(NOLOCK)
+				ON (i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO' AND
+				    i.ID_ASSET = a.ID_ASSET AND
+					i.ID_PRODUCT_CATEGORY = a.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.SECURITIES_TRADE s WITH(NOLOCK)
+				ON (s.ID_TRADE = t.ID_TRADE AND
+					s.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+		WHERE t.ID_PRODUCT_CATEGORY = @ID_DERIVADOS
+		AND ((t.DH_TRADE BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX) OR
+					   (s.DT_REQ_SEC_SETTLEMENT BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX)) 
+		GROUP BY t.CD_PARTY_ACCOUNT,t.ID_PRODUCT_CATEGORY
+
+		--cuentas de margen con posicion al corte
+		INSERT INTO #temp_account_products_x_row
+		SELECT t.ID_ACCOUNT, 
+		       @ID_CUENTAS_MARGEN ID_PRODUCT_CATEGORY
+		FROM  ODS.SECURITIES_BALANCE_TAX_LOT t			WITH(NOLOCK)
+			INNER JOIN ODS.ASSET_IDENTIFICATION i		WITH(NOLOCK)
+				ON (i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO' AND
+					i.ID_ASSET = t.ID_ASSET AND
+					i.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY) 
+			INNER JOIN ODS.ASSET_HOLDING nomi			WITH(NOLOCK)
+				ON (nomi.ID_TAXLOT = t.ID_TAXLOT AND
+					nomi.DT_BALANCE = t.DT_BALANCE AND
+					nomi.CD_PRICE_TYPE='NOGR' AND
+					nomi.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.ASSET_HOLDING prmp			WITH(NOLOCK)
+				ON (prmp.ID_TAXLOT = t.ID_TAXLOT AND
+					prmp.DT_BALANCE = t.DT_BALANCE AND
+					prmp.CD_PRICE_TYPE='PRMP' AND
+					prmp.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.DEBT d						WITH(NOLOCK)
+				ON (d.ID_ASSET = i.ID_ASSET AND 
+					d.ID_PRODUCT_CATEGORY = i.ID_PRODUCT_CATEGORY)
+			INNER JOIN LE.TB_PARTY_RELATIONSHIP_PRODUCT_SERVICE ps  WITH(NOLOCK)
+				ON (ps.CD_ASSET_CLASSIFICATION = '2. Cuenta de Margen' AND
+					ps.ID_ACCOUNT = t.ID_ACCOUNT)
+		WHERE t.DT_BALANCE = @DT_END_DATE_AUX AND
+			  t.ID_PRODUCT_CATEGORY = @ID_RENTA_FIJA AND
+			  d.CD_INDEX <> 'FSE ' AND ISNULL(t.CD_BALANCE_TYPE,'TRAD') = 'TRAD'
+		GROUP BY t.ID_ACCOUNT
+		
+		--validacion movimientos cuentas margen
+		INSERT INTO #temp_account_products_x_row
+		SELECT  CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
+				@ID_CUENTAS_MARGEN ID_PRODUCT_CATEGORY
+		FROM ODS.TRADE t	WITH(NOLOCK)
+			INNER JOIN  COL.SETTLEMENT_TRADE st WITH(NOLOCK)
+				ON (st.ID_TRADE = T.ID_TRADE AND
+				    st.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.ASSET_IDENTIFICATION i	WITH(NOLOCK)
+				ON (i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO' AND
+					i.ID_ASSET = t.ID_ASSET AND
+					i.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.SECURITIES_TRADE s	WITH(NOLOCK)
+				ON (s.ID_TRADE = t.ID_TRADE AND 
+					s.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.DEBT d
+				ON (d.ID_ASSET = i.ID_ASSET AND 
+					d.ID_PRODUCT_CATEGORY = i.ID_PRODUCT_CATEGORY)
+			INNER JOIN LE.TB_PARTY_RELATIONSHIP_PRODUCT_SERVICE ps  WITH(NOLOCK)
+				ON (ps.CD_ASSET_CLASSIFICATION = '2. Cuenta de Margen' AND
+					ps.ID_ACCOUNT = t.CD_PARTY_ACCOUNT)
+		WHERE t.ID_PRODUCT_CATEGORY = @ID_RENTA_FIJA
+		AND   st.CD_CLASS_ORDER = 'C' 
+		AND   st.CD_TYPE_OFFER  = 'N' 
+		AND   s.DT_REQ_SEC_SETTLEMENT <=@DT_END_DATE_AUX
+				AND ((t.DH_TRADE BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX and s.DT_REQ_SEC_SETTLEMENT <= @DT_END_DATE_AUX) OR
+					   (s.DT_REQ_SEC_SETTLEMENT BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX)) 
+				AND t.CD_TRADE_STATUS = 'STLD'
+		AND d.CD_INDEX <> 'FSE '
+		GROUP BY t.CD_PARTY_ACCOUNT			 	
+
+		--cuentas con posicion de divisas al corte
+		INSERT INTO #temp_account_products_x_row
+		SELECT 	CAST(t2.CD_PARTY_ACCOUNT AS INT) CD_PARTY_ACCOUNT, 
+				t2.ID_PRODUCT_CATEGORY
+		FROM  ODS.TRADE t2  WITH(NOLOCK)
+			INNER JOIN COL.FOREIGN_EXCHANGE_RATES r WITH(NOLOCK)
+				ON (r.ID_TRADE = t2.ID_TRADE AND
+				    r.ID_PRODUCT_CATEGORY = t2.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.SECURITIES_TRADE t5 WITH(NOLOCK)
+				ON (t5.ID_TRADE = t2.ID_TRADE   AND
+					t5.ID_PRODUCT_CATEGORY = t2.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.ASSET t	 WITH(NOLOCK)
+				ON (t.ID_ASSET = t2.ID_ASSET AND
+					t.ID_PRODUCT_CATEGORY = t2.ID_PRODUCT_CATEGORY) 
+			INNER JOIN ODS.FOREIGN_EXCHANGE t1 WITH(NOLOCK)
+				ON (t1.ID_ASSET = t.ID_ASSET AND 
+					t1.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY) 
+			INNER JOIN LE.TB_PARTY t6	WITH(NOLOCK)
+						ON (t6.ID_PARTY = t2.ID_PARTY) 
+		 WHERE t2.ID_PRODUCT_CATEGORY = @ID_DIVISAS AND 
+			 ((t2.DH_TRADE BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX) OR
+			 (t5.DT_REQ_SEC_SETTLEMENT BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX))
+		GROUP BY t2.CD_PARTY_ACCOUNT, t2.ID_PRODUCT_CATEGORY
+
+		--cuentas con posicion de cartera al corte
+		INSERT INTO #temp_account_products_x_row
+		SELECT x.IdAccount,
+			   x.ID_PRODUCT_CATEGORY	
+		FROM (SELECT      
+					a.ID_ACCOUNT			IdAccount,
+					@ID_CARTERA				ID_PRODUCT_CATEGORY,	
+					salini.DT_CALCULATION	Fecha,
+					salini.VL_BALANCE		ValorNeto
+			  FROM  COL.BALANCE salini WITH(NOLOCK) 
+				INNER JOIN dbBDC.LE.TB_ACCOUNT a WITH(NOLOCK) 
+					ON (a.ID_ACCOUNT_SOURCE = salini.ID_OYD_IDENTIFICATION)
+			  WHERE salini.DT_CALCULATION = DATEADD(day,-1,@DT_START_DATE_AUX) 
+			  UNION ALL
+			  SELECT   
+					MIN(a.ID_ACCOUNT)															IdAccount,
+					@ID_CARTERA																	ID_PRODUCT_CATEGORY,	
+					t.DT_CALCULATION															Fecha,
+					SUM(ISNULL(t.VL_NET,0))														ValorNeto    
+			  FROM  COL.CLIENT_PORTFOLIO t WITH(NOLOCK) 
+				INNER JOIN .LE.TB_ACCOUNT a WITH(NOLOCK) 
+					ON (a.ID_ACCOUNT_SOURCE = t.ID_OYD_IDENTIFICATION)
+			  WHERE t.DT_CALCULATION BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX AND
+					CD_TRANSACTION_TYPE IN ('RECOMPRA', 'COMPRA', 'REVENTA', 'VENTA')
+			  GROUP BY DT_CALCULATION, DT_SETTLEMENT 
+			  UNION ALL
+			 SELECT   
+					a.ID_ACCOUNT									IdAccount,
+					@ID_CARTERA										ID_PRODUCT_CATEGORY,	
+					t.DT_CALCULATION								Fecha,
+					ISNULL(t.VL_NET,0)       ValorNeto    
+			 FROM  COL.CLIENT_PORTFOLIO t WITH(NOLOCK) 
+				INNER JOIN .LE.TB_ACCOUNT a WITH(NOLOCK) 
+					ON (a.ID_ACCOUNT_SOURCE = t.ID_OYD_IDENTIFICATION)
+			 WHERE t.DT_CALCULATION BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX AND
+				   CD_TRANSACTION_TYPE NOT IN ('RECOMPRA', 'COMPRA', 'REVENTA', 'VENTA'))x 
+		WHERE CONVERT(DECIMAL(22,2),x.ValorNeto) !=0
+		GROUP BY x.IdAccount,x.ID_PRODUCT_CATEGORY
+
+		--Fondos
+		INSERT INTO #temp_accountfunds_lastposition_without_transfer
+		SELECT  t.ID_ACCOUNT,
+				t.ID_ASSET,
+				ifu.ID_FUND_ENCARGO,
+				MAX(t.dt_balance) DT_BALANCE
+		FROM ODS.SECURITIES_BALANCE_TAX_LOT t  WITH(NOLOCK)
+			INNER JOIN COL.INVESTMENT_FUND_BALANCE ifu  WITH(NOLOCK)
+				ON (ifu.ID_TAXLOT = t.ID_TAXLOT)
+		WHERE  t.DT_BALANCE BETWEEN  @DT_START_DATE_AUX AND @DT_END_DATE_AUX AND
+			   t.ID_PRODUCT_CATEGORY = @ID_FONDOS AND ISNULL(t.CD_BALANCE_TYPE,'TRAD') = 'TRAD' 
+		GROUP BY t.ID_ACCOUNT,t.ID_ASSET,ifu.ID_FUND_ENCARGO
+
+		/*Seleccionar los portafolio,encargo,vigentes por cuenta y maxima fecha de posicion*/
+		INSERT INTO #temp_accountfunds_lastposition
+		SELECT f.ID_ACCOUNT,
+			   f.ID_ASSET,
+			   f.ID_FUND_ENCARGO,
+			   f.DT_BALANCE
+		FROM (SELECT  tr.ID_ASSET,
+					tr.ID_FUND_ENCARGO,
+					MAX(tr.DT_END_DATE) DT_END_DATE
+			  FROM   #temp_accountfunds_lastposition_without_transfer lp
+				INNER JOIN [COL].[INVESTMENT_FUND_BALANCE_ACCOUNT] tr
+					ON (tr.ID_ASSET = lp.ID_ASSET AND
+						tr.ID_FUND_ENCARGO = lp.ID_FUND_ENCARGO)
+			  WHERE DT_INITIAL_DATE <= @DT_END_DATE_AUX AND DT_END_DATE >= @DT_START_DATE_AUX
+			  GROUP BY tr.ID_ASSET,tr.ID_FUND_ENCARGO)x
+		INNER JOIN [COL].[INVESTMENT_FUND_BALANCE_ACCOUNT] a
+			ON (a.ID_ASSET =x.ID_ASSET AND
+				a.ID_FUND_ENCARGO = x.ID_FUND_ENCARGO AND
+				a.DT_END_DATE = x.DT_END_DATE) 
+		INNER JOIN #temp_accountfunds_lastposition_without_transfer f
+			ON (f.ID_ASSET = a.ID_ASSET AND
+				f.ID_FUND_ENCARGO = a.ID_FUND_ENCARGO AND
+				f.ID_ACCOUNT = a.ID_ACCOUNT)
+
+
+		/*Seleccionar datos para los rendimientos*/
+		INSERT INTO #temp_accountfunds_lastposition_Rendimientos
+		SELECT f.ID_ACCOUNT,
+				f.ID_ASSET,
+				f.ID_FUND_ENCARGO,
+				f.DT_BALANCE
+		FROM (SELECT  tr.ID_ASSET,
+					tr.ID_FUND_ENCARGO,
+					tr.id_account,
+					MAX(tr.DT_END_DATE) DT_END_DATE
+				FROM   #temp_accountfunds_lastposition_without_transfer lp
+				INNER JOIN [dbBDC].[COL].[INVESTMENT_FUND_BALANCE_ACCOUNT] tr
+					ON (tr.ID_ASSET = lp.ID_ASSET AND
+						tr.ID_FUND_ENCARGO = lp.ID_FUND_ENCARGO
+						and tr.id_account = lp.ID_ACCOUNT)
+				WHERE DT_INITIAL_DATE <= @DT_END_DATE_AUX AND DT_END_DATE >= @DT_START_DATE_AUX
+				GROUP BY tr.ID_ASSET,tr.ID_FUND_ENCARGO, tr.ID_ACCOUNT)x
+		INNER JOIN [dbBDC].[COL].[INVESTMENT_FUND_BALANCE_ACCOUNT] a
+			ON (a.ID_ASSET =x.ID_ASSET AND
+				a.ID_FUND_ENCARGO = x.ID_FUND_ENCARGO AND
+				a.DT_END_DATE = x.DT_END_DATE) 
+		INNER JOIN #temp_accountfunds_lastposition_without_transfer f
+			ON (f.ID_ASSET = a.ID_ASSET AND
+				f.ID_FUND_ENCARGO = a.ID_FUND_ENCARGO AND
+				f.ID_ACCOUNT = a.ID_ACCOUNT)
+
+		INSERT INTO #temp_account_products_x_row
+		SELECT t.ID_ACCOUNT,
+			   t.ID_PRODUCT_CATEGORY
+		FROM  #temp_accountfunds_lastposition lp
+			INNER JOIN ODS.SECURITIES_BALANCE_TAX_LOT t  WITH(NOLOCK)
+				ON (t.DT_BALANCE = lp.DT_BALANCE AND
+					t.ID_ASSET = lp.ID_ASSET AND
+					t.ID_ACCOUNT = lp.ID_ACCOUNT)
+			INNER JOIN COL.INVESTMENT_FUND_BALANCE ifu  WITH(NOLOCK)
+				ON (ifu.ID_TAXLOT = t.ID_TAXLOT AND
+				    ifu.ID_FUND_ENCARGO = lp.ID_FUND_ENCARGO)
+			INNER JOIN ODS.ASSET a  WITH(NOLOCK)
+				ON (a.ID_ASSET = t.ID_ASSET AND
+					a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.ASSET_IDENTIFICATION ai  WITH(NOLOCK)
+				ON (ai.ID_PRODUCT_CATEGORY  = a.ID_PRODUCT_CATEGORY AND 
+					ai.ID_ASSET = a.ID_ASSET AND 
+					ai.CD_ASSET_IDENTIFICATION_TYPE = 'N')
+			LEFT JOIN COL.ASSET_PRICING pract  WITH(NOLOCK)
+				ON (pract.ID_ASSET = t.ID_ASSET AND
+					pract.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY AND
+					pract.CD_PRICE_TYPE = 'NAVP' AND
+					pract.DT_DATE = t.DT_BALANCE)
+			INNER JOIN	dbBDC.COL.INVESTMENT_FUND_CHARGES ch  WITH(NOLOCK)
+				ON (ch.ID_ASSET = a.ID_ASSET AND
+					ch.ID_PRODUCT_CATEGORY = a.ID_PRODUCT_CATEGORY)
+		WHERE ISNULL(t.CD_BALANCE_TYPE,'TRAD') = 'TRAD'
+		GROUP BY t.ID_ACCOUNT,t.ID_PRODUCT_CATEGORY
+
+--***** CONTROL CUENTAS CON RENDIMIENTOS SIN POSICION
+		INSERT INTO #temp_account_products_x_row
+		SELECT ID_ACCOUNT,
+			   @ID_FONDOS 
+		FROM  #temp_accountfunds_lastposition_rendimientos
+--***** FIN CONTROL CUENTAS CON RENDIMIENTOS SIN POSICION
+
+		-- Validacion Saldo en Canje
+		INSERT INTO #temp_account_products_x_row
+		SELECT ex.ID_ACCOUNT,
+			   @ID_FONDOS
+		FROM #temp_accountfunds_lastposition p  
+			INNER JOIN dbBDC.COL.EXCHANGE_BALANCE ex
+				ON (ex.ID_ACCOUNT = p.ID_ACCOUNT AND
+				    ex.DT_EXCHANGE = p.DT_BALANCE)
+
+		-- Validacion movimientos fondos
+		INSERT INTO #temp_account_products_x_row
+		SELECT  CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
+				t.ID_PRODUCT_CATEGORY
+		FROM ODS.TRADE t WITH(NOLOCK)
+			INNER JOIN ODS.INVESTMENT_FUND_TRANSACTION ift WITH(NOLOCK)
+				ON (ift.ID_TRADE = t.ID_TRADE AND
+					ift.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+			INNER JOIN ODS.ASSET a	WITH(NOLOCK)
+				ON (a.ID_ASSET = t.ID_ASSET AND
+					a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+		WHERE t.ID_PRODUCT_CATEGORY = @ID_FONDOS
+		AND	  t.DH_TRADE >= @DT_START_DATE_AUX
+		AND   t.DH_TRADE <= @DT_END_DATE_AUX
+		AND	  ift.CD_TYPE NOT IN ('UT','UTX','RF')
+		AND	  t.CD_TRADE_STATUS = 'STLD'
+
+		--trasponer los registros de las cuenta para que los productos queden en columnas
+		INSERT 
+		INTO #temp_account_products_x_column (ID_ACCOUNT)
+		SELECT ID_ACCOUNT 
+		FROM #temp_account_products_x_row 
+		GROUP BY ID_ACCOUNT
+
+		--Actualizar las columnas con los productos que el cliente tiene saldo al corte
+			
+		--RENTA FIJA
+		UPDATE t
+		SET t.ID_RENTA_FIJA = ISNULL(ap.ID_PRODUCT_CATEGORY,0)
+		FROM #temp_account_products_x_column t
+			LEFT JOIN #temp_account_products_x_row ap
+				on (ap.ID_ACCOUNT = t.ID_ACCOUNT AND
+					ap.ID_PRODUCT_CATEGORY = @ID_RENTA_FIJA)
+
+		--RENTA VARIABLE
+		UPDATE t
+		SET t.ID_RENTA_VARIABLE = ISNULL(ap.ID_PRODUCT_CATEGORY,0)
+		FROM #temp_account_products_x_column t
+			LEFT JOIN #temp_account_products_x_row ap
+				on (ap.ID_ACCOUNT = t.ID_ACCOUNT AND
+					ap.ID_PRODUCT_CATEGORY = @ID_RENTA_VARIABLE)
+
+		--OPERACIONES LIQUIDEZ
+		UPDATE t
+		SET t.ID_OPERACIONES_LIQUIDEZ =ISNULL(ap.ID_PRODUCT_CATEGORY,0)
+		FROM #temp_account_products_x_column t
+			LEFT JOIN #temp_account_products_x_row ap
+				on (ap.ID_ACCOUNT = t.ID_ACCOUNT AND
+					ap.ID_PRODUCT_CATEGORY = @ID_OPERACIONES_LIQUIDEZ)
+
+		--DERIVADOS
+		UPDATE t
+		SET t.ID_DERIVADOS =ISNULL(ap.ID_PRODUCT_CATEGORY,0)
+		FROM #temp_account_products_x_column t
+			LEFT JOIN #temp_account_products_x_row ap
+				on (ap.ID_ACCOUNT = t.ID_ACCOUNT AND
+					ap.ID_PRODUCT_CATEGORY = @ID_DERIVADOS)
+
+		--CUENTAS MARGEN
+		UPDATE t
+		SET t.ID_CUENTAS_MARGEN = ISNULL(ap.ID_PRODUCT_CATEGORY,0)
+		FROM #temp_account_products_x_column t
+			LEFT JOIN #temp_account_products_x_row ap
+				on (ap.ID_ACCOUNT = t.ID_ACCOUNT AND
+					ap.ID_PRODUCT_CATEGORY = @ID_CUENTAS_MARGEN)
+			
+		--OTRAS MONEDAS			
+		UPDATE t
+		SET t.ID_DIVISAS = ISNULL(ap.ID_PRODUCT_CATEGORY,0)
+		FROM #temp_account_products_x_column t
+			LEFT JOIN #temp_account_products_x_row ap
+				on (ap.ID_ACCOUNT = t.ID_ACCOUNT AND
+					ap.ID_PRODUCT_CATEGORY = @ID_DIVISAS)
+
+		--CARTERA
+		UPDATE t
+		SET t.ID_CARTERA =ISNULL(ap.ID_PRODUCT_CATEGORY,0)
+		FROM #temp_account_products_x_column t
+			LEFT JOIN #temp_account_products_x_row ap
+				on (ap.ID_ACCOUNT = t.ID_ACCOUNT AND
+					ap.ID_PRODUCT_CATEGORY = @ID_CARTERA)
+		
+		--FONDOS
+		UPDATE t
+		SET t.ID_FONDOS =ISNULL(ap.ID_PRODUCT_CATEGORY,0)
+		FROM #temp_account_products_x_column t
+			LEFT JOIN #temp_account_products_x_row ap
+				on (ap.ID_ACCOUNT = t.ID_ACCOUNT AND
+					ap.ID_PRODUCT_CATEGORY = @ID_FONDOS)
+
+		
+		--cuentas con posicion de fondos al corte y cuya totalidad de los fondos asociados no estan aprobados
+
+		/*Crear tabla con los fondos que fueron aprobados a traves de la interfaz de aprobacion de mercados*/
+		INSERT INTO #temp_funds_approved
+		SELECT * FROM  sta.CSVToTable(@ID_ASSET_LIST_AUX)
+
+		/*inserta las cuentas que tienen fondos pero que no han sido aprobados en su totalidad*/
+		INSERT INTO #temp_funds_pending_approved(ID_ACCOUNT)
+		SELECT ac.ID_ACCOUNT
+		FROM (SELECT
+					x.ID_ACCOUNT										  ID_ACCOUNT,
+					x.ID_PRODUCT_CATEGORY								  ID_PRODUCT_CATEGORY,
+					COUNT(1)											  NUM_TOTAL_FUND_X_ACCOUNT,
+					SUM(CASE WHEN (f.ID_ASSET IS NULL) THEN 0 ELSE 1 END) NUM_APPROVED_FUNDS
+				FROM (SELECT  t.ID_ACCOUNT,
+							t.ID_PRODUCT_CATEGORY,
+							t.ID_ASSET 
+					  FROM #temp_accountfunds_lastposition lp
+						INNER JOIN ODS.SECURITIES_BALANCE_TAX_LOT t  WITH(NOLOCK)
+							ON (t.DT_BALANCE = lp.DT_BALANCE AND
+								t.ID_ASSET = lp.ID_ASSET AND
+								t.ID_ACCOUNT = lp.ID_ACCOUNT)
+					  WHERE ISNULL(t.CD_BALANCE_TYPE,'TRAD') = 'TRAD'
+					  GROUP BY t.ID_ACCOUNT,t.ID_PRODUCT_CATEGORY,t.ID_ASSET)x
+				LEFT JOIN #temp_funds_approved f
+					ON (f.ID_ASSET = x.ID_ASSET)
+				GROUP BY ID_ACCOUNT,ID_PRODUCT_CATEGORY) ac
+		WHERE ac.NUM_TOTAL_FUND_X_ACCOUNT <> ac.NUM_APPROVED_FUNDS
+		
+		--Cuentas que tienen fondos pero la totalidad no ha sido aprobada, se les actualiza el campo 
+		--con el valor -99 para que no se generen
+		
+		UPDATE t
+		SET t.ID_FONDOS = -99
+		FROM #temp_account_products_x_column t
+			INNER JOIN #temp_funds_pending_approved ap
+				on (ap.ID_ACCOUNT = t.ID_ACCOUNT)
+
+	    --Cuentas que cumplen con la aprobacion de productos
+		INSERT INTO #temp_Generate_Monthly_Account(ID_ACCOUNT)
+		SELECT t.ID_ACCOUNT
+		FROM #temp_account_products_x_column t
+			INNER JOIN  @PRODUCT_LIST_TABLE_AUX  x
+				ON	(CASE WHEN t.ID_RENTA_FIJA = 0			 THEN 0 ELSE x.ID_RENTA_FIJA END) = t.ID_RENTA_FIJA AND
+					(CASE WHEN t.ID_RENTA_VARIABLE = 0		 THEN 0 ELSE x.ID_RENTA_VARIABLE END) = t.ID_RENTA_VARIABLE AND
+					(CASE WHEN t.ID_FONDOS = 0				 THEN 0 ELSE x.ID_FONDOS END) = t.ID_FONDOS AND
+					(CASE WHEN t.ID_OPERACIONES_LIQUIDEZ = 0 THEN 0 ELSE x.ID_OPERACIONES_LIQUIDEZ END) = t.ID_OPERACIONES_LIQUIDEZ AND
+					(CASE WHEN t.ID_DERIVADOS = 0			 THEN 0 ELSE x.ID_DERIVADOS END) = t.ID_DERIVADOS AND
+					(CASE WHEN t.ID_DIVISAS = 0				 THEN 0 ELSE x.ID_DIVISAS END) = t.ID_DIVISAS AND
+					(CASE WHEN t.ID_CUENTAS_MARGEN = 0		 THEN 0 ELSE x.ID_CUENTAS_MARGEN END) = t.ID_CUENTAS_MARGEN AND
+					(CASE WHEN t.ID_CARTERA = 0				 THEN 0 ELSE x.ID_CARTERA END) = t.ID_CARTERA 
+		
+		--Control utilizado para la funcionalidad de reproceso, si esta en 0 almacena las cuentas para generar
+		--extracto mensual que aun no han sido generadas, si es diferente de 0 retorna las cuentas que tienen
+		--todos los mercados aprobados y cuyo extracto ya fue generado
+		PRINT @INT_REPROCESS_AUX ;
+		IF @INT_REPROCESS_AUX = 0
+			BEGIN
+				INSERT INTO #temp_Monthly_Account_without_generating (ID_ACCOUNT)
+				SELECT a.ID_ACCOUNT
+				FROM #temp_Generate_Monthly_Account a 
+				WHERE a.ID_ACCOUNT NOT IN (SELECT ag.ID_ACCOUNT
+										   FROM dbBDC_Statement.dbo.TB_ACCOUNT_GENERATED ag
+										   WHERE ag.PROCESS_STATUS = @STATE_CREATED AND
+												 ag.CD_START_DATE = @DT_START_DATE_AUX AND
+												 ag.CD_END_DATE   = @DT_END_DATE_AUX)
+
+	            -- ***** CONTROL PARA CLIENTES INACTIVOS
+	
+	            -- Chequea saldos de cuentas inactivas en la hoja resumen
+	
+	            CREATE TABLE #tmpResumen(
+	                ID_ACCOUNT int,
+	                Id_Statement_Section    int,
+	                VISIBILITY  BIT ,
+	                APPLY_SUMMARY bit,
+	                SaldoActual                decimal(22,8),
+	                fechaActual                datetime,
+	                SaldoAnterior            decimal(22,8),
+	                fechaAnterior            datetime,
+	                PorcentajePortafolio    decimal(22,8),
+	                Variacion                decimal(22,8) ,
+	                GENERAR BIT)
+	
+	            DECLARE @ID_ACCOUNT_INAC int
+	            DECLARE @SaldoInactivo decimal(22,8)
+	
+	            SET @SaldoInactivo = (select strValor from dbBDC_Stages.dbo.tblparametros where strparametro = 'SaldoInactivo')
+	
+	            DECLARE cursorCtasInactivas CURSOR FOR   
+	                SELECT a.ID_ACCOUNT
+	                FROM #temp_Monthly_Account_without_generating a
+	                INNER JOIN COL.TB_ACCOUNT_CONFIGURATION ac
+	                    ON (ac.ID_ACCOUNT = a.ID_ACCOUNT AND
+	                        ac.ES_SEND_PORTFOLIO = @ES_SEND_PORTFOLIO)
+	                inner join (SELECT distinct l.ID_ACCOUNT FROM LE.TB_PARTY_RELATIONSHIP_PRODUCT_SERVICE l
+	                                    WHERE l.CD_PRODUCT_SERVICE_STATUS = 'INAC') Z
+	                on a.ID_ACCOUNT = Z.ID_ACCOUNT 
+	
+	
+	            OPEN cursorCtasInactivas
+	
+	            FETCH NEXT FROM cursorCtasInactivas  INTO @ID_ACCOUNT_INAC 
+	
+	            WHILE @@FETCH_STATUS = 0  
+	            BEGIN  
+	                insert into #tmpResumen(Id_Statement_Section, VISIBILITY, APPLY_SUMMARY, SaldoActual, fechaActual, SaldoAnterior, fechaAnterior, PorcentajePortafolio, Variacion)
+	                exec [sta].[SpGetSectionVisibilityList]  @ID_ACCOUNT_INAC ,@DT_START_DATE_AUX,@DT_END_DATE_AUX,0
+	
+	                update #tmpResumen set ID_ACCOUNT = @ID_ACCOUNT_INAC where ID_ACCOUNT is null
+	
+	                FETCH NEXT FROM cursorCtasInactivas INTO @ID_ACCOUNT_INAC
+	            END
+	
+	            CLOSE cursorCtasInactivas;  
+	            DEALLOCATE cursorCtasInactivas; 
+	
+	            -- Cuentas inactivas a las que se debe generar extracto
+	            UPDATE #tmpResumen set GENERAR = 1 where (SaldoActual > @SaldoInactivo) or (SaldoAnterior  > @SaldoInactivo)
+	
+	            -- Fin Chequea saldos en hoja resumen
+	
+	            -- Chequea movimientos de cartera de las cuentas inactivas
+	
+	            CREATE TABLE #tmpCarteraCtasInactivas(
+	                ID_ACCOUNT int,
+	                Fecha datetime,
+	                TipoOperaciom varchar(35),
+	                Detalle varchar(250),
+	                Valor decimal(22,2),
+	                GMF decimal(22,2),
+	                Retencion decimal(22,2),
+	                Reteica decimal(22,2),
+	                ValorNeto decimal(22,2),
+	                Saldo decimal(22,2) )
+	
+	
+	            SET @ID_ACCOUNT_INAC = 0
+	
+	            DECLARE cursorCtasInactivasCartera CURSOR FOR   
+	                    select distinct ID_ACCOUNT from #tmpResumen where ID_ACCOUNT not in(select distinct ID_ACCOUNT from #tmpResumen where GENERAR = 1)
+	
+	            OPEN cursorCtasInactivasCartera
+	
+	            FETCH NEXT FROM cursorCtasInactivasCartera  
+	            INTO @ID_ACCOUNT_INAC 
+	
+	            WHILE @@FETCH_STATUS = 0  
+	            BEGIN  
+	                insert into #tmpCarteraCtasInactivas(ID_ACCOUNT, Fecha, TipoOperaciom, Detalle, Valor, GMF, Retencion, Reteica, ValorNeto, Saldo )
+	                EXEC [sta].[SpGetCarteraClienteMovimientos] @ID_ACCOUNT_INAC,@DT_START_DATE_AUX,@DT_END_DATE_AUX
+	
+	                FETCH NEXT FROM cursorCtasInactivasCartera INTO @ID_ACCOUNT_INAC
+	            END
+	
+	            CLOSE cursorCtasInactivasCartera;  
+	            DEALLOCATE cursorCtasInactivasCartera; 
+	
+	            Update R set GENERAR = 1
+	            FROM #tmpResumen R inner join  #tmpCarteraCtasInactivas C on R.ID_ACCOUNT = C.ID_ACCOUNT 
+	            WHERE C.Detalle <> 'SALDO INICIAL'
+	
+	            -- Fin Chequea movimientos de cartera de las cuentas inactivas
+	
+	            -- Chequea movimientos de fondos de las cuentas inactivas
+	
+	            SELECT  CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
+	                            t.ID_PRODUCT_CATEGORY
+	            INTO #tmpCtasFondos
+	            FROM ODS.TRADE t WITH(NOLOCK)
+	            INNER JOIN ODS.INVESTMENT_FUND_TRANSACTION ift WITH(NOLOCK)
+                        ON (ift.ID_TRADE = t.ID_TRADE AND
+	                        ift.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+	            INNER JOIN ODS.ASSET a    WITH(NOLOCK)
+	                    ON (a.ID_ASSET = t.ID_ASSET AND
+	                        a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
+	            WHERE t.ID_PRODUCT_CATEGORY = @ID_FONDOS
+	                    AND      t.DH_TRADE >= @DT_START_DATE_AUX
+	                    AND   t.DH_TRADE <= @DT_END_DATE_AUX
+	                    AND      ift.CD_TYPE NOT IN ('UT','UTX','RF')
+	
+	            UPDATE R set GENERAR = 1
+	            from #tmpResumen R inner join  
+	                (select distinct CD_PARTY_ACCOUNT from #tmpCtasFondos F inner join (select distinct ID_ACCOUNT  from #tmpResumen) I on F.CD_PARTY_ACCOUNT = I.ID_ACCOUNT  ) C 
+	                on R.ID_ACCOUNT = C.CD_PARTY_ACCOUNT
+	
+	            -- Fin Chequea movimientos de fondos de las cuentas inactivas
+	
+	            -- ***** FIN CONTROL PARA CLIENTES INACTIVOS
+	
+	            --Retorna las cuentas que tienen aprobados todos los productos ya sea para generacion mensual o reproceso y 
+	            --que se encuentran activas o bloqueadas, o estén inactivas pero se les deba generar extracto
+	
+	            SELECT a.ID_ACCOUNT
+	            FROM #temp_Monthly_Account_without_generating a
+	            INNER JOIN COL.TB_ACCOUNT_CONFIGURATION ac
+	                ON (ac.ID_ACCOUNT = a.ID_ACCOUNT AND
+	                    ac.ES_SEND_PORTFOLIO = @ES_SEND_PORTFOLIO)
+	            --INNER JOIN (SELECT distinct l.ID_ACCOUNT FROM LE.TB_PARTY_RELATIONSHIP_PRODUCT_SERVICE l
+	            --                    WHERE l.CD_PRODUCT_SERVICE_STATUS = 'ACTV') Z
+	            --    ON a.ID_ACCOUNT = Z.ID_ACCOUNT 
+	
+	            UNION ALL
+	
+	            -- cuentas inactivas que tienen saldo mayor al valor del parametro o que tiene algun movimiento de cartera, o tienen algun nmovimiento de fondos
+	            SELECT DISTINCT ID_ACCOUNT from #tmpResumen WHERE GENERAR = 1  
+
+			END
+		ELSE
+			BEGIN
+				INSERT INTO #temp_Monthly_Account_without_generating (ID_ACCOUNT)
+				SELECT a.ID_ACCOUNT
+				FROM #temp_Generate_Monthly_Account a 
+				WHERE a.ID_ACCOUNT IN (SELECT ag.ID_ACCOUNT
+										   FROM dbBDC_Statement.dbo.TB_ACCOUNT_GENERATED ag
+										   WHERE ag.PROCESS_STATUS = @STATE_CREATED AND
+												 ag.CD_START_DATE = @DT_START_DATE_AUX AND
+												 ag.CD_END_DATE   = @DT_END_DATE_AUX)
+
+				--retorna las cuentas que tienen aprobados todos los productos ya sea para generacion mensual o reproceso y 
+				
+
+				SELECT a.ID_ACCOUNT
+				FROM #temp_Monthly_Account_without_generating a
+					INNER JOIN COL.TB_ACCOUNT_CONFIGURATION ac
+						ON (ac.ID_ACCOUNT = a.ID_ACCOUNT AND ac.ES_SEND_PORTFOLIO = @ES_SEND_PORTFOLIO)
+			END
+		
+		--Borrar tablas temporales
+		DROP TABLE #temp_account_products_x_row 
+		DROP TABLE #temp_account_products_x_column	
+		DROP TABLE #temp_funds_pending_approved
+		DROP TABLE #temp_Generate_Monthly_Account
+		DROP TABLE #temp_Monthly_Account_without_generating
+		DROP TABLE #temp_funds_approved
+		DROP TABLE #tmp_posiciones_x_nominal_rf
+		DROP TABLE #tmp_garantias_rf
+		DROP TABLE #temp_accountfunds_lastposition
+		DROP TABLE #temp_accountfunds_lastposition_without_transfer
+	END TRY
+	BEGIN CATCH 
+		SET @strMsg = 'Error en el procedimiento ' + ERROR_PROCEDURE()
+		SET @strMsg = @strMsg + char(13) + 
+						' - Nro. Error ' + convert(varchar, error_number())  + char(13) +
+						error_message()
+		raiserror(@strMsg, 16, 1)
+	END CATCH
+END
+
+
+  trabaja todo con mayusculas los comandos
