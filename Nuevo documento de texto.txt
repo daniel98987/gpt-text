@@ -1,1273 +1,1336 @@
-USE [dbBDC]
-GO
-/****** Object:  StoredProcedure [sta].[SpGetGenerateMonthlyAccount]    Script Date: 4/11/2024 9:12:59 a. m. ******/
-SET ANSI_NULLS ON
-GO
-SET QUOTED_IDENTIFIER ON
-GO
-
------------------------------------------------------------------------------
--- Nombre del Objeto:   [sta].[SpGetGenerateMonthlyAccount] 
--- Autor:               Luis Felipe Aguirre Ramirez (SETI)
--- Descripción:         Proceso que retorna las cuentas a las cuales se le van a generar extracto mensual,
---                      para los productos aprobados y que no se encuentran bloqueados.
--- Fecha Creación:      20/05/2016
--- Fecha Modificación:  19/07/2016
--- Modifica:			Luis Felipe Aguirre Ramirez (SETI)
--- Descripcion:         Se adiciona filtro para enviar solo las cuentas que tenga el indicador de envio portafolio
---                      activo
-
--- Modificado Por:		Carlos Zuluaga (SETI)
--- Fecha:				02/11/2016
--- Descripción:			Se controla para que la información de Cartera se devuelva con dos decimales
-
--- Modificado por:		Carlos Zuluaga (SETI)
--- Fecha Modificación:	Noviembre 24 de 2016
--- Descripción:			Se adiciona filtro CD_INDEX <> 'FSE ' para que no duplique los registros
-
--- Modificado por:		Luis Felipe Aguirre Ramirez (SETI)
--- Fecha Modificación:	Diciembre 28 de 2016
--- Descripción:			Se ajusta consulta visibilidad porducto cartera tal como esta en el procedimiento 
---                      spGetCarteraClienteMovimientos.
-
--- Modificado por:		Carlos Zuluaga (SETI)
--- Fecha Modificación:	Marzo 1 de 2017
--- Descripción:			En posiciones de renta fija se ajusta la consulta por la adición de dos columnas VIP.
-
--- Modificado por:		Carlos Zuluaga (SETI)
--- Fecha modificación:	22 de marzo de 2017
--- Descripción:			Se filtra por estado de vigencia del movimiento (CD_TRADE_STATUS  = 'STLD') para RF y RV
-
--- Modificado por:		Carlos Zuluaga (SETI)
--- Fecha:				Abril 6 de 2017
--- Descripción:			Se controla para cuando existen cuentas con rendimientos pero sin posiciones
-
--- Modificado por:		Carlos Zuluaga (SETI)
--- Descripción:			Se filtra por tipo de balance de la posición (CD_BALANCE_TYPE = ‘TRAD’) (posiciones vigentes) para fondos
---						Se filtra por estado del movimiento (CD_TRADE_STATUS = 'STLD') (transacciones vigentes) para fondos
--- Fecha:				26 de mayo de 2017
-
--- Modificado por:		Carlos Zuluaga (SETI)
--- Descripción:			Se filtra por tipo de balance de la posición (CD_BALANCE_TYPE = ‘TRAD’) (posiciones vigentes) para RF y RV
--- Fecha:				29 de junio de 2017
-
--- Modificado por:       Carlos Zuluaga (SETI)
--- Fecha modificación:   11 de noviembre de 2017
--- Descripción:          Se ajuste join con la tabla TB_PARTY_RELATIONSHIP_PRODUCT_SERVICE en posiciones de renta fija.
---                       Ajuste para solución del caso de soporte #300-108504.
-
--- Modificado por:       Carlos Zuluaga (SETI)
--- Fecha modificación:   8 de mayo de 2018
--- Descripción:          Si el cliente está INACTIVO y tiene saldo menor a un valor parametrizable (parametro SaldoInactivo)
---                       y no tiene movimientos, no debe generarse en el masivo
---                       Control de cambios clientes inactivos
-
--- Modificado por:       Carlos Zuluaga (SETI)
--- Fecha modificación:   11 de mayo de 2018
--- Descripción:          Se ajuste join con la tabla TB_PARTY_RELATIONSHIP_PRODUCT_SERVICE en transacciones y operaciones por cumplir de renta fija.
---                       Ajuste para solución del caso de soporte #300-124615.
-
--- Modificado por:        Carlos Zuluaga (SETI)
--- Fecha modificación:    1 de agosto de 2018
--- Descripción:           Se incluyen transacciones de democratización para renta variable
---                        Control de cambios Extractos (Democratización).
-
--- Modificado por:		  Carlos Zuluaga (SETI)
--- Fecha modificación:    Octubre 2 de 2019
--- Descripción:           Se ajusta sp con temas existentes antes de automatización.
-
--- Modificado por:		  Beatriz Consuegra (SETI)
--- Fecha modificación:    Abril 22 de 2024
--- Descripción:           Se eliminan los filtros para las cuentas bloqueadas. 
-
-
--- Detalle parámetros:  
---					  @PRODUCT_LIST_TABLE_AUX: Estructura tipo tabla que contiene la lista de productos aprobados.
---					  @ID_ASSET_LIST_AUX: Lista de Fondos que fueron aprobados, incluye el id del padre y sus respectivos hijos.
---					  @DT_START_DATE_AUX: Fecha Inicio del corte
---					  @DT_END_DATE_AUX:   Fecha Fin Corte
---                    @INT_REPROCESS_AUX: Indicador Filtro Consulta para reprocesos valor 0 por defecto generacion mensual, <> 0 reproceso
-
--- Ejemplo de llamado: 
-/*declare @p1 dbo.Monthly_Produt_List_Type
-insert into @p1 values(N'6',N'2',N'3',N'5',N'4',N'7',N'8',N'9')
-
-exec sta.SpGetGenerateMonthlyAccount @PRODUCT_LIST_TABLE=@p1,@ID_ASSET_LIST='744, 745, 746, 747, 748, 749, 767, 768, 769, 770, 771, 772, 773, 774, 775, 776, 777, 778, 779, 780, 781, 782, 783, 784, 785, 786, 787, 788, 789, 790, 791, 792, 793, 794, 795, 796, 797, 798, 799, 800, 801, 802, 803, 804, 805, 806, 807, 808, 809, 810, 811, 812, 813, 814, 815, 816, 817, 818, 819, 820, 821, 822, 823, 823, 824, 825, 826, 827, 843, 844, 845, 846, 847, 848, 849, 850, 852, 861, 864, 875, 876, 877, 878, 879, 880, 881, 882, 885, 886, 887, 921, 975, 981, 1008, 1009, 1018, 1019, 1022, 1023, 1024, 1026, 1027, 1028, 1034, 1043, 1044, 1048, 1050, 1053, 1054, 1055, 1056, 1057, 1058, 1059, 1061, 1075, 1077, 1078, 1079, 1080, 1081, 1082, 1084, 1086, 1088, 1090, 1093, 1097, 1103, 1114, 1115, 1116, 1117, 1119, 1120, 1121, 1122, 1123, 1124, 1126, 1128, 1132',@DT_START_DATE='2023-10-01 00:00:00',@DT_END_DATE='2023-10-31 00:00:00',@INT_REPROCESS=0*/
------------------------------------------------------------------------------
-ALTER PROCEDURE [sta].[SpGetGenerateMonthlyAccount]
-	@PRODUCT_LIST_TABLE Monthly_Produt_List_Type READONLY,
-	@ID_ASSET_LIST  VARCHAR(max),
-	@DT_START_DATE	DATETIME ,
-	@DT_END_DATE	DATETIME ,
-	@INT_REPROCESS  INT = 0 
-AS
-BEGIN
-	SET NOCOUNT ON
-	DECLARE @PRODUCT_LIST_TABLE_AUX Monthly_Produt_List_Type,
-			@ID_ASSET_LIST_AUX  VARCHAR(max),
-			@DT_START_DATE_AUX	DATETIME ,
-			@DT_END_DATE_AUX DATETIME ,
-			@INT_REPROCESS_AUX  INT;
-
-			SET	@ID_ASSET_LIST_AUX = @ID_ASSET_LIST
-				SET @DT_START_DATE_AUX =@DT_START_DATE
-				SET @DT_END_DATE_AUX   =@DT_END_DATE
-				SET @INT_REPROCESS_AUX =@INT_REPROCESS;
-			
-			INSERT INTO @PRODUCT_LIST_TABLE_AUX
-			SELECT	*
-			FROM	@PRODUCT_LIST_TABLE
-			/*Crear tabla temporal para funcionalidad de extracto diario que contiene la fecha maxima para los fondos
-	  Asociados a una cuenta en un rango de fechas determinado sin filtar las trasferencias*/
-	CREATE TABLE #temp_accountfunds_lastposition_without_transfer(
-			ID_ACCOUNT		INT, 
-			ID_ASSET		INT,
-			ID_FUND_ENCARGO VARCHAR(10),
-			DT_BALANCE		DATETIME)
-
-	/*Crear tabla temporal para funcionalidad de extracto diario que contiene la fecha maxima para los fondos
-	 Asociados a una cuenta en un rango de fechas determinado*/
-	CREATE TABLE #temp_accountfunds_lastposition(
-		ID_ACCOUNT INT, 
-		ID_ASSET   INT,
-		ID_FUND_ENCARGO VARCHAR(10),
-		DT_BALANCE DATETIME)
-
-/*Crear tabla temporal para manejo de rendimientos*/
-	CREATE TABLE #temp_accountfunds_lastposition_Rendimientos(
-		ID_ACCOUNT		INT, 
-		ID_ASSET		INT,
-		ID_FUND_ENCARGO VARCHAR(10),
-		DT_BALANCE		DATETIME)
-	
-	--Tabla temporal posiciones renta fija
-	CREATE TABLE #tmp_posiciones_x_nominal_rf(
-		IdCuenta				int,    
-		IdTaxlot                int,
-		IdProductCategory       int,
-		IdAsset                 int,
-		EsActiva                int default 0)
-	
-	--tabla temporal posiciones renta fija titulos garantia
-	CREATE TABLE #tmp_garantias_rf(
-		IdAccount               int,
-		IdTaxlot                int,
-		IdProductCategory       int,
-		IdAsset                 int,
-		EsActiva                int default 0)		
-		
-	--Tabla temporal para almacenar las cuentas con sus productos por fila
-	CREATE TABLE #temp_account_products_x_row(
-		ID_ACCOUNT			int,
-		ID_PRODUCT_CATEGORY int)
-
-	-- tabla para trasponer las cuentas y colocar los porductos por columnas
-	CREATE TABLE #temp_account_products_x_column(
-		ID_ACCOUNT				int,
-		ID_RENTA_FIJA			int,
-        ID_RENTA_VARIABLE		int,
-		ID_FONDOS				int,
-		ID_OPERACIONES_LIQUIDEZ int,
-		ID_DERIVADOS			int,
-		ID_DIVISAS              int,
-		ID_CUENTAS_MARGEN		int,
-		ID_CARTERA				int)
-
-	--tabla que almacena el lista en enviada en el parametro @ID_ASSET_LIST_AUX despues de invocar la funcion sta.CSVToTable
-	CREATE TABLE #temp_funds_approved(
-		ID_ASSET	int)
-	
-	--tabla que almacena las cuentas que tienen el mercado de fondos, pero no todos han sido aprobados
-	CREATE TABLE #temp_funds_pending_approved(
-		ID_ACCOUNT			int)
-
-	--tabla que almacena todas las cuentas cuyos productos han sido aprovados en su totalidad, que no han sido bloqueadas y
-	--no se ha generado su extracto mensual.
-	CREATE TABLE #temp_Generate_Monthly_Account(
-		ID_ACCOUNT	int)
-	
-	--tabla que almacena todas las cuentas cuyos productos han sido aprovados en su totalidad excluyendo las cuentas a las cuales 
-	-- ya se les genero extracto durante el mes 
-	CREATE TABLE #temp_Monthly_Account_without_generating(
-		ID_ACCOUNT	int)
-										
-	-- constantes
-	DECLARE @strMsg						varchar(500),
-	        @STATE_CREATED              SMALLINT	= 1,
-			@ID_RENTA_FIJA				INT			= 2,
-			@ID_RENTA_VARIABLE			INT			= 3,
-			@ID_OPERACIONES_LIQUIDEZ	INT			= 5,
-			@ID_DERIVADOS				INT			= 4,
-			@ID_CUENTAS_MARGEN			INT			= 8,
-			@ID_DIVISAS					INT			= 7,
-			@ID_CARTERA					INT			= 9,
-			@ID_FONDOS					INT			= 6,
-			@CD_BLOCK_STATUS_OYD        VARCHAR(4)	= 'BLTO',
-			@ES_SEND_PORTFOLIO          CHAR(1)		= '1',
-			@NM_ASSET_NAME				VARCHAR(350) = 'COP',		-- Nombre de la moneda en la que se presenta la garantia
-			@CD_BUCKET_TYPE				CHAR(4)		= 'MOU1', 		-- Tipo Garantia derivados ver maestro enumerations	
-			@CD_BUCKET_TYPE_CM			CHAR(4)		= 'MOU2',		-- Tipo Garantia Cuenta  de margen ver maestro enumerations	
-			@CD_BUCKET_TYPE_REPO_RF		CHAR(4)		= 'MOU3',  		-- Tipo Garantia Repo Renta Fija ver maestro enumerations	
-			@CD_BUCKET_TYPE_REPO_RV		CHAR(4)		= 'MOU4',		-- Tipo Garantia Repo Renta Variable ver maestro enumerations
-			@CD_BUCKET_TYPE_SIMU		CHAR(4)		= 'MOU5',		-- Tipo Garantia Simultanea ver maestro enumerations
-			@CD_BUCKET_TYPE_TTV_RF		CHAR(4)		= 'MOU6',		-- Tipo Garantia TTV Renta Fija ver maestro enumerations
-			@CD_BUCKET_TYPE_TTV_RV		CHAR(4)		= 'MOU7'		-- Tipo Garantia TTV Renta Variable ver maestro enumerations
-
-	BEGIN TRY
-		
-		-- Renta Fija
-		--Validar cada una de las secciones del extracto para renta fija, en caso de que alguna retorne informacion 
-		--se retorna la cuenta.
-
-		INSERT INTO #tmp_posiciones_x_nominal_rf(
-						IdCuenta,
-						IdTaxlot,
-						IdProductCategory,
-						IdAsset)
-		SELECT 	t.ID_ACCOUNT            Cuenta,
-				t.ID_TAXLOT				IdTaxlot,
-				t.ID_PRODUCT_CATEGORY	IdProductCategory,
-				t.ID_ASSET              IdAsset	
-		FROM ODS.SECURITIES_BALANCE_TAX_LOT t WITH(NOLOCK)
-			INNER JOIN  ODS.ASSET a									WITH(NOLOCK)
-				ON (a.ID_ASSET = t.ID_ASSET AND
-					a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY) 
-			INNER JOIN COL.TB_ISSUER p								WITH(NOLOCK)
-				ON (p.ID_COMMON_IDENTIFICATION = a.ID_ISSUER_ROLE)
-			INNER JOIN ODS.ASSET_IDENTIFICATION i					WITH(NOLOCK)
-				ON (i.ID_ASSET = t.ID_ASSET AND
-					i.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY AND
-					i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO') 
-			INNER JOIN ODS.ASSET_HOLDING nomi						WITH(NOLOCK)
-				ON (nomi.ID_TAXLOT = t.ID_TAXLOT AND
-					nomi.DT_BALANCE = t.DT_BALANCE AND
-					nomi.CD_PRICE_TYPE='NOGR' AND
-					nomi.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.ASSET_HOLDING prmp							WITH(NOLOCK)
-				ON (prmp.ID_TAXLOT = t.ID_TAXLOT AND
-					prmp.DT_BALANCE = t.DT_BALANCE AND
-					prmp.CD_PRICE_TYPE='PRMP' AND
-					prmp.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			LEFT JOIN ODS.ASSET_HOLDING lnpv							WITH(NOLOCK)
-				ON (lnpv.ID_TAXLOT = t.ID_TAXLOT AND
-					lnpv.DT_BALANCE = t.DT_BALANCE AND
-					lnpv.CD_PRICE_TYPE='LNPV' AND
-					lnpv.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			LEFT JOIN ODS.ASSET_HOLDING inpv							WITH(NOLOCK)
-				ON (inpv.ID_TAXLOT = t.ID_TAXLOT AND
-					inpv.DT_BALANCE = t.DT_BALANCE AND
-					inpv.CD_PRICE_TYPE='INPV' AND
-					inpv.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.DEBT d										WITH(NOLOCK)
-				ON (d.ID_ASSET = a.ID_ASSET AND 
-					d.ID_PRODUCT_CATEGORY = a.ID_PRODUCT_CATEGORY)
-			INNER JOIN (select distinct ID_ACCOUNT from  LE.TB_PARTY_RELATIONSHIP_PRODUCT_SERVICE
-					    where CD_ASSET_CLASSIFICATION != '2. Cuenta de Margen') ps    
-                ON (ps.ID_ACCOUNT = t.ID_ACCOUNT)
-		WHERE t.DT_BALANCE  = @DT_END_DATE_AUX AND
-			  t.ID_PRODUCT_CATEGORY = @ID_RENTA_FIJA AND
-			  t.DS_COL_BLOCK_REASON != 'Simu Activo' AND
-			  d.CD_INDEX <> 'FSE ' AND ISNULL(t.CD_BALANCE_TYPE, 'TRAD') = 'TRAD'
-		
-		UPDATE x
-		SET  EsActiva = (SELECT 
-							CASE WHEN COUNT(1) > 0 THEN 1 ELSE 0 END)		
-		FROM #tmp_posiciones_x_nominal_rf x
-			INNER JOIN ODS.SECURITIES_ENTRY st
-				ON (st.ID_TAXLOT = x.IdTaxlot AND
-				    st.ID_PRODUCT_CATEGORY = x.IdProductCategory AND
-					st.ID_ASSET = x.IdAsset AND
-					st.DT_BALANCE = @DT_END_DATE_AUX)
-			INNER JOIN ODS.TRADE t 
-				ON (t.ID_TRADE = st.ID_TRADE AND
-				    t.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY AND
-				   (t.DS_COMMENTS = 'Simultanea Activa' OR t.DS_COMMENTS = 'Simul CRCC Activa')
-				   AND t.CD_TRADE_STATUS = 'STLD')
-
-
-		INSERT INTO #temp_account_products_x_row (ID_ACCOUNT,ID_PRODUCT_CATEGORY)
-		SELECT y.IdCuenta,y.IdProductCategory
-		FROM #tmp_posiciones_x_nominal_rf y
-		WHERE EsActiva = 0
-		GROUP BY y.IdCuenta,y.IdProductCategory
-		
-		 -- Validacion movimientos renta fija
-		INSERT INTO #temp_account_products_x_row (ID_ACCOUNT,ID_PRODUCT_CATEGORY)
-		SELECT CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
-		       t.ID_PRODUCT_CATEGORY 
-		FROM ODS.TRADE t	WITH(NOLOCK)
-			INNER JOIN  COL.SETTLEMENT_TRADE st WITH(NOLOCK)
-				ON (st.ID_TRADE = T.ID_TRADE AND
-					st.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN  ODS.ASSET a	WITH(NOLOCK)
-				ON (a.ID_ASSET = t.ID_ASSET AND
-				    a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.ASSET_IDENTIFICATION i WITH(NOLOCK)
-				ON (i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO' AND
-					i.ID_ASSET = a.ID_ASSET AND
-					i.ID_PRODUCT_CATEGORY = a.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.SECURITIES_TRADE s WITH(NOLOCK)
-				ON (s.ID_TRADE = t.ID_TRADE AND 
-					s.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.DEBT d WITH(NOLOCK)
-				ON (d.ID_ASSET = a.ID_ASSET AND 
-					d.ID_PRODUCT_CATEGORY = a.ID_PRODUCT_CATEGORY)
-			INNER JOIN (select distinct ID_ACCOUNT from  LE.TB_PARTY_RELATIONSHIP_PRODUCT_SERVICE
-					    where CD_ASSET_CLASSIFICATION <> '2. Cuenta de Margen') ps    
-                ON (ps.ID_ACCOUNT = t.CD_PARTY_ACCOUNT)
-		WHERE t.ID_PRODUCT_CATEGORY = @ID_RENTA_FIJA		
-		AND   st.CD_CLASS_ORDER = 'C' 
-		AND   st.CD_TYPE_OFFER = 'N' 
-		AND ((t.DH_TRADE BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX and s.DT_REQ_SEC_SETTLEMENT <= @DT_END_DATE_AUX) OR
-					   (s.DT_REQ_SEC_SETTLEMENT BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX))  
-		AND d.CD_INDEX <> 'FSE ' AND t.CD_TRADE_STATUS = 'STLD'
-		GROUP BY t.CD_PARTY_ACCOUNT,t.ID_PRODUCT_CATEGORY
-
-		-- Validacion titulos garantia renta fija
-		INSERT INTO #tmp_garantias_rf (
-					IdAccount,
-					IdTaxlot,
-					IdProductCategory,
-					IdAsset)
-		SELECT  t.ID_ACCOUNT												IdAccount,
-				t.ID_TAXLOT													IdTaxlot,
-				t.ID_PRODUCT_CATEGORY										IdProductCategory,
-				t.ID_ASSET                                                  IdAsset 	
-		FROM ODS.SECURITIES_BALANCE_TAX_LOT t	WITH(NOLOCK)
-			INNER JOIN  ODS.ASSET a		WITH(NOLOCK)
-				ON (a.ID_ASSET = t.ID_ASSET AND
-					a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)	
-			INNER JOIN COL.TB_ISSUER p		WITH(NOLOCK)
-				ON (p.ID_COMMON_IDENTIFICATION = a.ID_ISSUER_ROLE)
-			INNER JOIN ODS.ASSET_IDENTIFICATION i	WITH(NOLOCK)
-				ON (i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO' AND
-				    i.ID_ASSET = t.ID_ASSET AND
-					i.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.ASSET_HOLDING nomi	WITH(NOLOCK)
-				ON (nomi.CD_PRICE_TYPE='NOGR' AND
-					nomi.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY AND
-				    nomi.ID_TAXLOT = t.ID_TAXLOT AND
-					nomi.DT_BALANCE = t.DT_BALANCE)
-			INNER JOIN ODS.ASSET_HOLDING prmp	WITH(NOLOCK)
-				ON (prmp.CD_PRICE_TYPE='PRMP' AND
-					prmp.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY AND
-				    prmp.ID_TAXLOT = t.ID_TAXLOT AND
-					prmp.DT_BALANCE = t.DT_BALANCE)
-			INNER JOIN ODS.DEBT d		WITH(NOLOCK)
-				ON (d.ID_ASSET = a.ID_ASSET AND 
-					d.ID_PRODUCT_CATEGORY = a.ID_PRODUCT_CATEGORY)
-			INNER JOIN LE.TB_PARTY_RELATIONSHIP_PRODUCT_SERVICE ps  WITH(NOLOCK)
-				ON (ps.CD_ASSET_CLASSIFICATION != '2. Cuenta de Margen' AND
-					ps.ID_ACCOUNT = t.ID_ACCOUNT)
-		WHERE t.DT_BALANCE =@DT_END_DATE_AUX 
-		AND   t.ID_PRODUCT_CATEGORY = 2
-		AND   (t.DS_COL_BLOCK_REASON IS NOT NULL AND RTRIM(LTRIM(t.DS_COL_BLOCK_REASON)) != '')
-		AND   t.DS_COL_BLOCK_REASON != 'Simu Activo'
-		AND d.CD_INDEX <> 'FSE ' AND ISNULL(t.CD_BALANCE_TYPE, 'TRAD') = 'TRAD'
-				
-		UPDATE x
-		SET  EsActiva = (SELECT 
-							CASE WHEN COUNT(1) > 0 THEN 1 ELSE 0 END)		
-		FROM #tmp_garantias_rf x
-			INNER JOIN ODS.SECURITIES_ENTRY st WITH(NOLOCK)
-				ON (st.ID_TAXLOT = x.IdTaxlot AND
-				    st.ID_PRODUCT_CATEGORY = x.IdProductCategory AND
-					st.ID_ASSET = x.IdAsset AND
-					st.DT_BALANCE = @DT_END_DATE_AUX)
-			INNER JOIN ODS.TRADE t WITH(NOLOCK)
-				ON (t.ID_TRADE = st.ID_TRADE AND
-				    t.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY AND
-				   (t.DS_COMMENTS = 'Simultanea Activa' OR t.DS_COMMENTS = 'Simul CRCC Activa')
-				   AND t.CD_TRADE_STATUS = 'STLD')
-		
-		INSERT INTO #temp_account_products_x_row (ID_ACCOUNT,ID_PRODUCT_CATEGORY)		
-		SELECT t.IdAccount,t.IdProductCategory
-		FROM #tmp_garantias_rf t
-		WHERE t.EsActiva = 0
-		GROUP BY t.IdAccount,t.IdProductCategory
-		
-		-- Validacion operaciones pendientes por cumplir renta fija
-		INSERT INTO #temp_account_products_x_row (ID_ACCOUNT,ID_PRODUCT_CATEGORY)
-		SELECT CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
-		       t.ID_PRODUCT_CATEGORY  
-		FROM ODS.TRADE t	WITH(NOLOCK)
-			INNER JOIN  COL.SETTLEMENT_TRADE st WITH(NOLOCK)
-				ON (st.ID_TRADE = T.ID_TRADE AND
-					st.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.ASSET a WITH(NOLOCK)
-				ON ( a.ID_ASSET = t.ID_ASSET AND
-					 a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.ASSET_IDENTIFICATION i WITH(NOLOCK)
-				ON (i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO' AND
-					i.ID_ASSET = a.ID_ASSET AND
-					i.ID_PRODUCT_CATEGORY = a.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.SECURITIES_TRADE s WITH(NOLOCK)
-				ON (s.ID_TRADE = t.ID_TRADE AND 
-					s.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.DEBT d	WITH(NOLOCK)
-				ON (d.ID_ASSET = a.ID_ASSET AND 
-					d.ID_PRODUCT_CATEGORY = a.ID_PRODUCT_CATEGORY)
-			INNER JOIN (select distinct ID_ACCOUNT from  LE.TB_PARTY_RELATIONSHIP_PRODUCT_SERVICE
-					    where CD_ASSET_CLASSIFICATION <> '2. Cuenta de Margen') ps    
-                ON (ps.ID_ACCOUNT = t.CD_PARTY_ACCOUNT)
-		WHERE t.ID_PRODUCT_CATEGORY = @ID_RENTA_FIJA
-		AND   t.DH_TRADE BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX
-		AND   st.CD_CLASS_ORDER = 'C' 
-		AND   st.CD_TYPE_OFFER  = 'N' 
-		AND   s.DT_REQ_SEC_SETTLEMENT > @DT_END_DATE_AUX
-		AND  d.CD_INDEX <> 'FSE ' AND t.CD_TRADE_STATUS = 'STLD'
-		GROUP BY t.CD_PARTY_ACCOUNT,t.ID_PRODUCT_CATEGORY
-
-		--cuentas con posicion de renta variable al corte
-		INSERT INTO #temp_account_products_x_row (ID_ACCOUNT,ID_PRODUCT_CATEGORY)
-		SELECT 
-			t.ID_ACCOUNT,
-			t.ID_PRODUCT_CATEGORY
-		FROM ODS.SECURITIES_BALANCE_TAX_LOT t WITH(NOLOCK)
-			INNER JOIN  ODS.ASSET a										WITH(NOLOCK)
-				ON (a.ID_ASSET = t.ID_ASSET AND
-					a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY) 
-			INNER JOIN COL.TB_ISSUER p									WITH(NOLOCK)
-				ON (p.ID_COMMON_IDENTIFICATION = a.ID_ISSUER_ROLE)
-			INNER JOIN ODS.ASSET_IDENTIFICATION i						WITH(NOLOCK)
-				ON (i.ID_ASSET = t.ID_ASSET AND
-					i.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY AND
-					i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO')
-			INNER JOIN ODS.ASSET_HOLDING nomi							WITH(NOLOCK)
-				ON (nomi.ID_TAXLOT = t.ID_TAXLOT AND
-					nomi.DT_BALANCE = t.DT_BALANCE AND
-					nomi.CD_PRICE_TYPE='NOGR' AND
-					nomi.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.ASSET_HOLDING prmp							WITH(NOLOCK)
-				ON (prmp.ID_TAXLOT = t.ID_TAXLOT AND
-					prmp.DT_BALANCE = t.DT_BALANCE AND
-					prmp.CD_PRICE_TYPE='PRMP' AND
-					prmp.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-		WHERE t.DT_BALANCE  =  @DT_END_DATE_AUX AND
-			  t.ID_PRODUCT_CATEGORY = @ID_RENTA_VARIABLE AND
-			  t.DS_COL_BLOCK_REASON <> 'Repo Activo' AND ISNULL(t.CD_BALANCE_TYPE, 'TRAD') = 'TRAD'
-		GROUP BY t.ID_ACCOUNT,t.ID_PRODUCT_CATEGORY
-
-		 -- Validacion movimientos renta variable
-		INSERT INTO #temp_account_products_x_row (ID_ACCOUNT,ID_PRODUCT_CATEGORY)
-		SELECT  CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
-		        t.ID_PRODUCT_CATEGORY  
-		FROM ODS.TRADE t WITH(NOLOCK)
-			INNER JOIN  COL.SETTLEMENT_TRADE st WITH(NOLOCK)
-					ON (st.ID_TRADE = T.ID_TRADE AND
-					    st.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.ASSET a	WITH(NOLOCK)
-					ON (a.ID_ASSET = t.ID_ASSET AND
-					    a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.ASSET_IDENTIFICATION i WITH(NOLOCK)
-					ON (i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO' AND
-						i.ID_ASSET = a.ID_ASSET AND
-						i.ID_PRODUCT_CATEGORY = a.ID_PRODUCT_CATEGORY)	
-			INNER JOIN ODS.SECURITIES_TRADE s WITH(NOLOCK)
-					ON (s.ID_TRADE = t.ID_TRADE AND 
-						s.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-		WHERE t.ID_PRODUCT_CATEGORY= @ID_RENTA_VARIABLE AND				
-				st.CD_CLASS_ORDER = 'A' AND
-				st.CD_TYPE_OFFER IN ('N','P', 'D')
-				AND ((t.DH_TRADE BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX and s.DT_REQ_SEC_SETTLEMENT <= @DT_END_DATE_AUX) OR
-					   (s.DT_REQ_SEC_SETTLEMENT BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX))  
-				AND t.CD_TRADE_STATUS = 'STLD'
-		GROUP BY t.CD_PARTY_ACCOUNT,t.ID_PRODUCT_CATEGORY
-		
-		-- Validacion titulos garantia renta variable
-		INSERT INTO #temp_account_products_x_row (ID_ACCOUNT,ID_PRODUCT_CATEGORY)
-		SELECT  t.ID_ACCOUNT,
-				t.ID_PRODUCT_CATEGORY
-		FROM ODS.SECURITIES_BALANCE_TAX_LOT t	WITH(NOLOCK)
-			INNER JOIN  ODS.ASSET a				WITH(NOLOCK)
-				ON (a.ID_ASSET = t.ID_ASSET AND
-					a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY) 
-			INNER JOIN COL.TB_ISSUER p			WITH(NOLOCK)
-				ON (p.ID_COMMON_IDENTIFICATION = a.ID_ISSUER_ROLE)
-			INNER JOIN ODS.ASSET_IDENTIFICATION i	WITH(NOLOCK)
-				ON (i.ID_ASSET = t.ID_ASSET AND
-					i.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY AND
-					i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO')
-			INNER JOIN ODS.ASSET_HOLDING nomi	WITH(NOLOCK)
-				ON (nomi.ID_TAXLOT = t.ID_TAXLOT AND
-					nomi.DT_BALANCE = t.DT_BALANCE AND
-					nomi.CD_PRICE_TYPE='NOGR' AND
-				    nomi.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.ASSET_HOLDING prmp	WITH(NOLOCK)
-			    ON (prmp.ID_TAXLOT = t.ID_TAXLOT AND
-				    prmp.DT_BALANCE = t.DT_BALANCE AND
-					prmp.CD_PRICE_TYPE='PRMP' AND
-			        prmp.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-		WHERE t.DT_BALANCE = @DT_END_DATE_AUX
-		AND   t.ID_PRODUCT_CATEGORY = @ID_RENTA_VARIABLE
-		AND   (t.DS_COL_BLOCK_REASON IS NOT NULL AND ltrim(rtrim(t.DS_COL_BLOCK_REASON)) <>'')
-		AND   t.DS_COL_BLOCK_REASON <>'Repo Activo' AND ISNULL(t.CD_BALANCE_TYPE,'TRAD') = 'TRAD'
-		GROUP BY t.ID_ACCOUNT,t.ID_PRODUCT_CATEGORY
-		
-		-- Validacion operaciones pendientes por cumplir renta variable
-		INSERT INTO #temp_account_products_x_row (ID_ACCOUNT,ID_PRODUCT_CATEGORY)
-		SELECT  CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
-		        t.ID_PRODUCT_CATEGORY 
-		FROM  ODS.TRADE t	WITH(NOLOCK)
-			INNER JOIN  COL.SETTLEMENT_TRADE st WITH(NOLOCK)
-				ON (st.ID_TRADE = T.ID_TRADE AND
-					st.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.ASSET a	WITH(NOLOCK)
-				ON (a.ID_ASSET = t.ID_ASSET AND
-				    a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.ASSET_IDENTIFICATION i WITH(NOLOCK)
-				ON (i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO' AND
-					i.ID_ASSET = a.ID_ASSET AND
-					i.ID_PRODUCT_CATEGORY = a.ID_PRODUCT_CATEGORY)	
-			INNER JOIN ODS.SECURITIES_TRADE s WITH(NOLOCK)
-				ON (s.ID_TRADE = t.ID_TRADE AND 
-					s.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-		WHERE t.ID_PRODUCT_CATEGORY = @ID_RENTA_VARIABLE AND
-			  t.DH_TRADE BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX AND
-			  st.CD_CLASS_ORDER = 'A' AND
-			  st.CD_TYPE_OFFER IN ('N','P', 'D') AND
-		      s.CD_SIDE in ('BUYI','SELL') AND
-			  s.DT_REQ_SEC_SETTLEMENT > @DT_END_DATE_AUX AND 
-			  t.CD_TRADE_STATUS = 'STLD'
-		GROUP BY t.CD_PARTY_ACCOUNT,t.ID_PRODUCT_CATEGORY
-
-		--cuentas con posicion de operaciones de liquidez al corte
-		INSERT INTO #temp_account_products_x_row
-		SELECT 
-			CONVERT(INT,t.CD_PARTY_ACCOUNT), 
-			@ID_OPERACIONES_LIQUIDEZ ID_PRODUCT_CATEGORY
-		FROM ODS.SECURITIES_FINANCING sf WITH(NOLOCK)
-			INNER JOIN ODS.TRADE t		 WITH(NOLOCK)
-				ON (t.ID_TRADE = sf.ID_TRADE AND
-					t.ID_PRODUCT_CATEGORY = sf.ID_PRODUCT_CATEGORY)
-		WHERE	sf.ID_PRODUCT_CATEGORY IN (@ID_RENTA_FIJA,@ID_RENTA_VARIABLE)
-				AND		sf.CD_TYPE IN ('SIMU','REPO','TTVS')
-				AND		sf.DH_TERMINATION > @DT_END_DATE_AUX		
-				AND		sf.DT_OPEN_SETT <= @DT_END_DATE_AUX	
-				AND		t.CD_TRADE_STATUS = 'STLD'
-		GROUP BY t.CD_PARTY_ACCOUNT
-
-		--cuentas con garantias en operaciones de liquidez
-		INSERT INTO #temp_account_products_x_row
-		SELECT  b.ID_ACCOUNT			 ID_ACCOUNT,
-		        @ID_OPERACIONES_LIQUIDEZ ID_PRODUCT_CATEGORY
-		FROM ODS.SECURITIES_BALANCE_BUCKET b WITH(NOLOCK)
-			INNER JOIN ODS.ASSET a			 WITH(NOLOCK)
-				ON (a.NM_ASSET_NAME = @NM_ASSET_NAME AND
-					a.ID_PRODUCT_CATEGORY = b.ID_PRODUCT_CATEGORY)
-		WHERE	b.DT_BALANCE = @DT_END_DATE_AUX AND
-				b.CD_BUCKET_TYPE IN (@CD_BUCKET_TYPE_REPO_RF,@CD_BUCKET_TYPE_REPO_RV, 
-									 @CD_BUCKET_TYPE_SIMU,@CD_BUCKET_TYPE_TTV_RF,	
-									 @CD_BUCKET_TYPE_TTV_RV) AND
-				b.ID_PRODUCT_CATEGORY = @ID_DIVISAS AND
-				b.VL_BALANCE != 0
-		GROUP BY b.ID_ACCOUNT
-
-		--validacion movimientos repos
-		INSERT INTO #temp_account_products_x_row
-		SELECT  CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
-				@ID_OPERACIONES_LIQUIDEZ ID_PRODUCT_CATEGORY
-		FROM  ODS.TRADE t	WITH(NOLOCK)
-			INNER JOIN COL.SETTLEMENT_TRADE stt WITH(NOLOCK)
-				ON (stt.ID_TRADE = t.ID_TRADE AND
-					stt.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.SECURITIES_TRADE st	WITH(NOLOCK)
-				ON (st.ID_TRADE = t.ID_TRADE AND
-					st.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-		WHERE t.ID_PRODUCT_CATEGORY IN (@ID_RENTA_FIJA,@ID_RENTA_VARIABLE)	AND			  
-			  stt.CD_CLASS_ORDER  = 'C'		AND
-			  stt.CD_TYPE_OFFER   = 'A'		
-			  AND ((t.DH_TRADE BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX) OR
-					   (st.DT_REQ_SEC_SETTLEMENT BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX)) 
-			  AND t.CD_TRADE_STATUS = 'STLD'
-		GROUP BY t.CD_PARTY_ACCOUNT
-		
-		--validacion movimientos simultaneas
-		INSERT INTO #temp_account_products_x_row
-		SELECT  CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
-				@ID_OPERACIONES_LIQUIDEZ ID_PRODUCT_CATEGORY
-		FROM  ODS.TRADE t WITH(NOLOCK)
-			INNER JOIN COL.SETTLEMENT_TRADE stt WITH(NOLOCK)
-				ON (stt.ID_TRADE = t.ID_TRADE AND
-					stt.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.SECURITIES_TRADE st	WITH(NOLOCK)
-				ON (st.ID_TRADE = t.ID_TRADE AND
-					st.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-		WHERE t.ID_PRODUCT_CATEGORY IN (@ID_RENTA_FIJA,@ID_RENTA_VARIABLE)	AND 				
-				stt.CD_CLASS_ORDER  = 'C'					AND
-				stt.CD_TYPE_OFFER   IN ('1','2','5','6')	
-				AND ((t.DH_TRADE BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX) OR
-					   (st.DT_REQ_SEC_SETTLEMENT BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX)) 
-				AND t.CD_TRADE_STATUS = 'STLD'
-		GROUP BY t.CD_PARTY_ACCOUNT
-
-		--validacion movimientos ttvs renta fija
-		INSERT INTO #temp_account_products_x_row
-		SELECT  CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
-				@ID_OPERACIONES_LIQUIDEZ ID_PRODUCT_CATEGORY
-		FROM  ODS.TRADE t WITH(NOLOCK)
-			INNER JOIN  COL.SETTLEMENT_TRADE stt WITH(NOLOCK)
-				ON (stt.ID_TRADE = T.ID_TRADE AND
-					stt.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.SECURITIES_TRADE st WITH(NOLOCK)
-				ON (st.ID_TRADE = t.ID_TRADE AND
-					st.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-		WHERE t.ID_PRODUCT_CATEGORY = @ID_RENTA_FIJA		
-		AND stt.CD_CLASS_ORDER = 'C' 
-		AND stt.CD_TYPE_OFFER IN ('3','4')
-		AND ((t.DH_TRADE BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX) OR
-					   (st.DT_REQ_SEC_SETTLEMENT BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX)) 
-		AND t.CD_TRADE_STATUS = 'STLD'
-		GROUP BY t.CD_PARTY_ACCOUNT
-
-		--validacion movimientos ttvs renta variable
-		INSERT INTO #temp_account_products_x_row
-		SELECT  CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
-				@ID_OPERACIONES_LIQUIDEZ ID_PRODUCT_CATEGORY	
-		FROM  ODS.TRADE t WITH(NOLOCK)
-			INNER JOIN  COL.SETTLEMENT_TRADE stt WITH(NOLOCK)
-				ON (stt.ID_TRADE = T.ID_TRADE AND
-					stt.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.SECURITIES_TRADE st WITH(NOLOCK)
-				ON (st.ID_TRADE = t.ID_TRADE AND
-					st.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-		WHERE t.ID_PRODUCT_CATEGORY = @ID_RENTA_VARIABLE	AND				
-				stt.CD_CLASS_ORDER = 'C'					AND
-				stt.CD_TYPE_OFFER IN ('3','4')				
-				AND ((t.DH_TRADE BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX) OR
-					   (st.DT_REQ_SEC_SETTLEMENT BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX)) 
-				AND t.CD_TRADE_STATUS = 'STLD'
-		GROUP BY t.CD_PARTY_ACCOUNT
-
-		--cuentas con posicion de derivados al corte
-		INSERT INTO #temp_account_products_x_row
-		SELECT 
-			t.ID_ACCOUNT,
-			t.ID_PRODUCT_CATEGORY
-		FROM ODS.SECURITIES_BALANCE_TAX_LOT t	WITH(NOLOCK)
-			INNER JOIN ODS.ASSET a				WITH(NOLOCK)
-				ON (a.ID_ASSET = t.ID_ASSET AND
-					a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)	
-			INNER JOIN ODS.ASSET_IDENTIFICATION i	WITH(NOLOCK)
-				ON (i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO' AND
-					i.ID_ASSET = a.ID_ASSET AND
-					i.ID_PRODUCT_CATEGORY = a.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.ASSET_HOLDING prmp	WITH(NOLOCK)
-				ON (prmp.ID_TAXLOT = t.ID_TAXLOT AND
-					prmp.DT_BALANCE = t.DT_BALANCE AND
-					prmp.CD_PRICE_TYPE='PRMP' AND
-					prmp.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-		WHERE   t.DT_BALANCE = @DT_END_DATE_AUX AND
-				t.ID_PRODUCT_CATEGORY = @ID_DERIVADOS AND
-				t.QT_SEC_BALANCE != 0
-		GROUP BY t.ID_ACCOUNT,t.ID_PRODUCT_CATEGORY
-
-		--cuentas con garantias de derivados al corte
-		INSERT INTO #temp_account_products_x_row
-		SELECT  b.ID_ACCOUNT	ID_ACCOUNT,
-				@ID_DERIVADOS	ID_PRODUCT_CATEGORY
-		FROM ODS.SECURITIES_BALANCE_BUCKET b WITH(NOLOCK)
-			INNER JOIN ODS.ASSET a			 WITH(NOLOCK)
-				ON (a.NM_ASSET_NAME = @NM_ASSET_NAME AND
-					a.ID_PRODUCT_CATEGORY = b.ID_PRODUCT_CATEGORY)
-		WHERE	b.DT_BALANCE = @DT_END_DATE_AUX AND
-				b.CD_BUCKET_TYPE = @CD_BUCKET_TYPE	AND
-				b.ID_PRODUCT_CATEGORY = @ID_DIVISAS AND
-				b.VL_BALANCE != 0	
-		GROUP BY b.ID_ACCOUNT
-
-		--validacion movimientos derivados
-		INSERT INTO #temp_account_products_x_row
-		SELECT  CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
-				t.ID_PRODUCT_CATEGORY
-		FROM ODS.TRADE t	WITH(NOLOCK)
-			INNER JOIN  ODS.ASSET a WITH(NOLOCK)
-				ON (a.ID_ASSET = t.ID_ASSET AND
-					a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)	
-			INNER JOIN ODS.ASSET_IDENTIFICATION i WITH(NOLOCK)
-				ON (i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO' AND
-				    i.ID_ASSET = a.ID_ASSET AND
-					i.ID_PRODUCT_CATEGORY = a.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.SECURITIES_TRADE s WITH(NOLOCK)
-				ON (s.ID_TRADE = t.ID_TRADE AND
-					s.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-		WHERE t.ID_PRODUCT_CATEGORY = @ID_DERIVADOS
-		AND ((t.DH_TRADE BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX) OR
-					   (s.DT_REQ_SEC_SETTLEMENT BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX)) 
-		GROUP BY t.CD_PARTY_ACCOUNT,t.ID_PRODUCT_CATEGORY
-
-		--cuentas de margen con posicion al corte
-		INSERT INTO #temp_account_products_x_row
-		SELECT t.ID_ACCOUNT, 
-		       @ID_CUENTAS_MARGEN ID_PRODUCT_CATEGORY
-		FROM  ODS.SECURITIES_BALANCE_TAX_LOT t			WITH(NOLOCK)
-			INNER JOIN ODS.ASSET_IDENTIFICATION i		WITH(NOLOCK)
-				ON (i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO' AND
-					i.ID_ASSET = t.ID_ASSET AND
-					i.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY) 
-			INNER JOIN ODS.ASSET_HOLDING nomi			WITH(NOLOCK)
-				ON (nomi.ID_TAXLOT = t.ID_TAXLOT AND
-					nomi.DT_BALANCE = t.DT_BALANCE AND
-					nomi.CD_PRICE_TYPE='NOGR' AND
-					nomi.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.ASSET_HOLDING prmp			WITH(NOLOCK)
-				ON (prmp.ID_TAXLOT = t.ID_TAXLOT AND
-					prmp.DT_BALANCE = t.DT_BALANCE AND
-					prmp.CD_PRICE_TYPE='PRMP' AND
-					prmp.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.DEBT d						WITH(NOLOCK)
-				ON (d.ID_ASSET = i.ID_ASSET AND 
-					d.ID_PRODUCT_CATEGORY = i.ID_PRODUCT_CATEGORY)
-			INNER JOIN LE.TB_PARTY_RELATIONSHIP_PRODUCT_SERVICE ps  WITH(NOLOCK)
-				ON (ps.CD_ASSET_CLASSIFICATION = '2. Cuenta de Margen' AND
-					ps.ID_ACCOUNT = t.ID_ACCOUNT)
-		WHERE t.DT_BALANCE = @DT_END_DATE_AUX AND
-			  t.ID_PRODUCT_CATEGORY = @ID_RENTA_FIJA AND
-			  d.CD_INDEX <> 'FSE ' AND ISNULL(t.CD_BALANCE_TYPE,'TRAD') = 'TRAD'
-		GROUP BY t.ID_ACCOUNT
-		
-		--validacion movimientos cuentas margen
-		INSERT INTO #temp_account_products_x_row
-		SELECT  CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
-				@ID_CUENTAS_MARGEN ID_PRODUCT_CATEGORY
-		FROM ODS.TRADE t	WITH(NOLOCK)
-			INNER JOIN  COL.SETTLEMENT_TRADE st WITH(NOLOCK)
-				ON (st.ID_TRADE = T.ID_TRADE AND
-				    st.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.ASSET_IDENTIFICATION i	WITH(NOLOCK)
-				ON (i.CD_ASSET_IDENTIFICATION_TYPE='NEMOTECNICO' AND
-					i.ID_ASSET = t.ID_ASSET AND
-					i.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.SECURITIES_TRADE s	WITH(NOLOCK)
-				ON (s.ID_TRADE = t.ID_TRADE AND 
-					s.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.DEBT d
-				ON (d.ID_ASSET = i.ID_ASSET AND 
-					d.ID_PRODUCT_CATEGORY = i.ID_PRODUCT_CATEGORY)
-			INNER JOIN LE.TB_PARTY_RELATIONSHIP_PRODUCT_SERVICE ps  WITH(NOLOCK)
-				ON (ps.CD_ASSET_CLASSIFICATION = '2. Cuenta de Margen' AND
-					ps.ID_ACCOUNT = t.CD_PARTY_ACCOUNT)
-		WHERE t.ID_PRODUCT_CATEGORY = @ID_RENTA_FIJA
-		AND   st.CD_CLASS_ORDER = 'C' 
-		AND   st.CD_TYPE_OFFER  = 'N' 
-		AND   s.DT_REQ_SEC_SETTLEMENT <=@DT_END_DATE_AUX
-				AND ((t.DH_TRADE BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX and s.DT_REQ_SEC_SETTLEMENT <= @DT_END_DATE_AUX) OR
-					   (s.DT_REQ_SEC_SETTLEMENT BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX)) 
-				AND t.CD_TRADE_STATUS = 'STLD'
-		AND d.CD_INDEX <> 'FSE '
-		GROUP BY t.CD_PARTY_ACCOUNT			 	
-
-		--cuentas con posicion de divisas al corte
-		INSERT INTO #temp_account_products_x_row
-		SELECT 	CAST(t2.CD_PARTY_ACCOUNT AS INT) CD_PARTY_ACCOUNT, 
-				t2.ID_PRODUCT_CATEGORY
-		FROM  ODS.TRADE t2  WITH(NOLOCK)
-			INNER JOIN COL.FOREIGN_EXCHANGE_RATES r WITH(NOLOCK)
-				ON (r.ID_TRADE = t2.ID_TRADE AND
-				    r.ID_PRODUCT_CATEGORY = t2.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.SECURITIES_TRADE t5 WITH(NOLOCK)
-				ON (t5.ID_TRADE = t2.ID_TRADE   AND
-					t5.ID_PRODUCT_CATEGORY = t2.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.ASSET t	 WITH(NOLOCK)
-				ON (t.ID_ASSET = t2.ID_ASSET AND
-					t.ID_PRODUCT_CATEGORY = t2.ID_PRODUCT_CATEGORY) 
-			INNER JOIN ODS.FOREIGN_EXCHANGE t1 WITH(NOLOCK)
-				ON (t1.ID_ASSET = t.ID_ASSET AND 
-					t1.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY) 
-			INNER JOIN LE.TB_PARTY t6	WITH(NOLOCK)
-						ON (t6.ID_PARTY = t2.ID_PARTY) 
-		 WHERE t2.ID_PRODUCT_CATEGORY = @ID_DIVISAS AND 
-			 ((t2.DH_TRADE BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX) OR
-			 (t5.DT_REQ_SEC_SETTLEMENT BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX))
-		GROUP BY t2.CD_PARTY_ACCOUNT, t2.ID_PRODUCT_CATEGORY
-
-		--cuentas con posicion de cartera al corte
-		INSERT INTO #temp_account_products_x_row
-		SELECT x.IdAccount,
-			   x.ID_PRODUCT_CATEGORY	
-		FROM (SELECT      
-					a.ID_ACCOUNT			IdAccount,
-					@ID_CARTERA				ID_PRODUCT_CATEGORY,	
-					salini.DT_CALCULATION	Fecha,
-					salini.VL_BALANCE		ValorNeto
-			  FROM  COL.BALANCE salini WITH(NOLOCK) 
-				INNER JOIN dbBDC.LE.TB_ACCOUNT a WITH(NOLOCK) 
-					ON (a.ID_ACCOUNT_SOURCE = salini.ID_OYD_IDENTIFICATION)
-			  WHERE salini.DT_CALCULATION = DATEADD(day,-1,@DT_START_DATE_AUX) 
-			  UNION ALL
-			  SELECT   
-					MIN(a.ID_ACCOUNT)															IdAccount,
-					@ID_CARTERA																	ID_PRODUCT_CATEGORY,	
-					t.DT_CALCULATION															Fecha,
-					SUM(ISNULL(t.VL_NET,0))														ValorNeto    
-			  FROM  COL.CLIENT_PORTFOLIO t WITH(NOLOCK) 
-				INNER JOIN .LE.TB_ACCOUNT a WITH(NOLOCK) 
-					ON (a.ID_ACCOUNT_SOURCE = t.ID_OYD_IDENTIFICATION)
-			  WHERE t.DT_CALCULATION BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX AND
-					CD_TRANSACTION_TYPE IN ('RECOMPRA', 'COMPRA', 'REVENTA', 'VENTA')
-			  GROUP BY DT_CALCULATION, DT_SETTLEMENT 
-			  UNION ALL
-			 SELECT   
-					a.ID_ACCOUNT									IdAccount,
-					@ID_CARTERA										ID_PRODUCT_CATEGORY,	
-					t.DT_CALCULATION								Fecha,
-					ISNULL(t.VL_NET,0)       ValorNeto    
-			 FROM  COL.CLIENT_PORTFOLIO t WITH(NOLOCK) 
-				INNER JOIN .LE.TB_ACCOUNT a WITH(NOLOCK) 
-					ON (a.ID_ACCOUNT_SOURCE = t.ID_OYD_IDENTIFICATION)
-			 WHERE t.DT_CALCULATION BETWEEN @DT_START_DATE_AUX AND @DT_END_DATE_AUX AND
-				   CD_TRANSACTION_TYPE NOT IN ('RECOMPRA', 'COMPRA', 'REVENTA', 'VENTA'))x 
-		WHERE CONVERT(DECIMAL(22,2),x.ValorNeto) !=0
-		GROUP BY x.IdAccount,x.ID_PRODUCT_CATEGORY
-
-		--Fondos
-		INSERT INTO #temp_accountfunds_lastposition_without_transfer
-		SELECT  t.ID_ACCOUNT,
-				t.ID_ASSET,
-				ifu.ID_FUND_ENCARGO,
-				MAX(t.dt_balance) DT_BALANCE
-		FROM ODS.SECURITIES_BALANCE_TAX_LOT t  WITH(NOLOCK)
-			INNER JOIN COL.INVESTMENT_FUND_BALANCE ifu  WITH(NOLOCK)
-				ON (ifu.ID_TAXLOT = t.ID_TAXLOT)
-		WHERE  t.DT_BALANCE BETWEEN  @DT_START_DATE_AUX AND @DT_END_DATE_AUX AND
-			   t.ID_PRODUCT_CATEGORY = @ID_FONDOS AND ISNULL(t.CD_BALANCE_TYPE,'TRAD') = 'TRAD' 
-		GROUP BY t.ID_ACCOUNT,t.ID_ASSET,ifu.ID_FUND_ENCARGO
-
-		/*Seleccionar los portafolio,encargo,vigentes por cuenta y maxima fecha de posicion*/
-		INSERT INTO #temp_accountfunds_lastposition
-		SELECT f.ID_ACCOUNT,
-			   f.ID_ASSET,
-			   f.ID_FUND_ENCARGO,
-			   f.DT_BALANCE
-		FROM (SELECT  tr.ID_ASSET,
-					tr.ID_FUND_ENCARGO,
-					MAX(tr.DT_END_DATE) DT_END_DATE
-			  FROM   #temp_accountfunds_lastposition_without_transfer lp
-				INNER JOIN [COL].[INVESTMENT_FUND_BALANCE_ACCOUNT] tr
-					ON (tr.ID_ASSET = lp.ID_ASSET AND
-						tr.ID_FUND_ENCARGO = lp.ID_FUND_ENCARGO)
-			  WHERE DT_INITIAL_DATE <= @DT_END_DATE_AUX AND DT_END_DATE >= @DT_START_DATE_AUX
-			  GROUP BY tr.ID_ASSET,tr.ID_FUND_ENCARGO)x
-		INNER JOIN [COL].[INVESTMENT_FUND_BALANCE_ACCOUNT] a
-			ON (a.ID_ASSET =x.ID_ASSET AND
-				a.ID_FUND_ENCARGO = x.ID_FUND_ENCARGO AND
-				a.DT_END_DATE = x.DT_END_DATE) 
-		INNER JOIN #temp_accountfunds_lastposition_without_transfer f
-			ON (f.ID_ASSET = a.ID_ASSET AND
-				f.ID_FUND_ENCARGO = a.ID_FUND_ENCARGO AND
-				f.ID_ACCOUNT = a.ID_ACCOUNT)
-
-
-		/*Seleccionar datos para los rendimientos*/
-		INSERT INTO #temp_accountfunds_lastposition_Rendimientos
-		SELECT f.ID_ACCOUNT,
-				f.ID_ASSET,
-				f.ID_FUND_ENCARGO,
-				f.DT_BALANCE
-		FROM (SELECT  tr.ID_ASSET,
-					tr.ID_FUND_ENCARGO,
-					tr.id_account,
-					MAX(tr.DT_END_DATE) DT_END_DATE
-				FROM   #temp_accountfunds_lastposition_without_transfer lp
-				INNER JOIN [dbBDC].[COL].[INVESTMENT_FUND_BALANCE_ACCOUNT] tr
-					ON (tr.ID_ASSET = lp.ID_ASSET AND
-						tr.ID_FUND_ENCARGO = lp.ID_FUND_ENCARGO
-						and tr.id_account = lp.ID_ACCOUNT)
-				WHERE DT_INITIAL_DATE <= @DT_END_DATE_AUX AND DT_END_DATE >= @DT_START_DATE_AUX
-				GROUP BY tr.ID_ASSET,tr.ID_FUND_ENCARGO, tr.ID_ACCOUNT)x
-		INNER JOIN [dbBDC].[COL].[INVESTMENT_FUND_BALANCE_ACCOUNT] a
-			ON (a.ID_ASSET =x.ID_ASSET AND
-				a.ID_FUND_ENCARGO = x.ID_FUND_ENCARGO AND
-				a.DT_END_DATE = x.DT_END_DATE) 
-		INNER JOIN #temp_accountfunds_lastposition_without_transfer f
-			ON (f.ID_ASSET = a.ID_ASSET AND
-				f.ID_FUND_ENCARGO = a.ID_FUND_ENCARGO AND
-				f.ID_ACCOUNT = a.ID_ACCOUNT)
-
-		INSERT INTO #temp_account_products_x_row
-		SELECT t.ID_ACCOUNT,
-			   t.ID_PRODUCT_CATEGORY
-		FROM  #temp_accountfunds_lastposition lp
-			INNER JOIN ODS.SECURITIES_BALANCE_TAX_LOT t  WITH(NOLOCK)
-				ON (t.DT_BALANCE = lp.DT_BALANCE AND
-					t.ID_ASSET = lp.ID_ASSET AND
-					t.ID_ACCOUNT = lp.ID_ACCOUNT)
-			INNER JOIN COL.INVESTMENT_FUND_BALANCE ifu  WITH(NOLOCK)
-				ON (ifu.ID_TAXLOT = t.ID_TAXLOT AND
-				    ifu.ID_FUND_ENCARGO = lp.ID_FUND_ENCARGO)
-			INNER JOIN ODS.ASSET a  WITH(NOLOCK)
-				ON (a.ID_ASSET = t.ID_ASSET AND
-					a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.ASSET_IDENTIFICATION ai  WITH(NOLOCK)
-				ON (ai.ID_PRODUCT_CATEGORY  = a.ID_PRODUCT_CATEGORY AND 
-					ai.ID_ASSET = a.ID_ASSET AND 
-					ai.CD_ASSET_IDENTIFICATION_TYPE = 'N')
-			LEFT JOIN COL.ASSET_PRICING pract  WITH(NOLOCK)
-				ON (pract.ID_ASSET = t.ID_ASSET AND
-					pract.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY AND
-					pract.CD_PRICE_TYPE = 'NAVP' AND
-					pract.DT_DATE = t.DT_BALANCE)
-			INNER JOIN	dbBDC.COL.INVESTMENT_FUND_CHARGES ch  WITH(NOLOCK)
-				ON (ch.ID_ASSET = a.ID_ASSET AND
-					ch.ID_PRODUCT_CATEGORY = a.ID_PRODUCT_CATEGORY)
-		WHERE ISNULL(t.CD_BALANCE_TYPE,'TRAD') = 'TRAD'
-		GROUP BY t.ID_ACCOUNT,t.ID_PRODUCT_CATEGORY
-
---***** CONTROL CUENTAS CON RENDIMIENTOS SIN POSICION
-		INSERT INTO #temp_account_products_x_row
-		SELECT ID_ACCOUNT,
-			   @ID_FONDOS 
-		FROM  #temp_accountfunds_lastposition_rendimientos
---***** FIN CONTROL CUENTAS CON RENDIMIENTOS SIN POSICION
-
-		-- Validacion Saldo en Canje
-		INSERT INTO #temp_account_products_x_row
-		SELECT ex.ID_ACCOUNT,
-			   @ID_FONDOS
-		FROM #temp_accountfunds_lastposition p  
-			INNER JOIN dbBDC.COL.EXCHANGE_BALANCE ex
-				ON (ex.ID_ACCOUNT = p.ID_ACCOUNT AND
-				    ex.DT_EXCHANGE = p.DT_BALANCE)
-
-		-- Validacion movimientos fondos
-		INSERT INTO #temp_account_products_x_row
-		SELECT  CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
-				t.ID_PRODUCT_CATEGORY
-		FROM ODS.TRADE t WITH(NOLOCK)
-			INNER JOIN ODS.INVESTMENT_FUND_TRANSACTION ift WITH(NOLOCK)
-				ON (ift.ID_TRADE = t.ID_TRADE AND
-					ift.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-			INNER JOIN ODS.ASSET a	WITH(NOLOCK)
-				ON (a.ID_ASSET = t.ID_ASSET AND
-					a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-		WHERE t.ID_PRODUCT_CATEGORY = @ID_FONDOS
-		AND	  t.DH_TRADE >= @DT_START_DATE_AUX
-		AND   t.DH_TRADE <= @DT_END_DATE_AUX
-		AND	  ift.CD_TYPE NOT IN ('UT','UTX','RF')
-		AND	  t.CD_TRADE_STATUS = 'STLD'
-
-		--trasponer los registros de las cuenta para que los productos queden en columnas
-		INSERT 
-		INTO #temp_account_products_x_column (ID_ACCOUNT)
-		SELECT ID_ACCOUNT 
-		FROM #temp_account_products_x_row 
-		GROUP BY ID_ACCOUNT
-
-		--Actualizar las columnas con los productos que el cliente tiene saldo al corte
-			
-		--RENTA FIJA
-		UPDATE t
-		SET t.ID_RENTA_FIJA = ISNULL(ap.ID_PRODUCT_CATEGORY,0)
-		FROM #temp_account_products_x_column t
-			LEFT JOIN #temp_account_products_x_row ap
-				on (ap.ID_ACCOUNT = t.ID_ACCOUNT AND
-					ap.ID_PRODUCT_CATEGORY = @ID_RENTA_FIJA)
-
-		--RENTA VARIABLE
-		UPDATE t
-		SET t.ID_RENTA_VARIABLE = ISNULL(ap.ID_PRODUCT_CATEGORY,0)
-		FROM #temp_account_products_x_column t
-			LEFT JOIN #temp_account_products_x_row ap
-				on (ap.ID_ACCOUNT = t.ID_ACCOUNT AND
-					ap.ID_PRODUCT_CATEGORY = @ID_RENTA_VARIABLE)
-
-		--OPERACIONES LIQUIDEZ
-		UPDATE t
-		SET t.ID_OPERACIONES_LIQUIDEZ =ISNULL(ap.ID_PRODUCT_CATEGORY,0)
-		FROM #temp_account_products_x_column t
-			LEFT JOIN #temp_account_products_x_row ap
-				on (ap.ID_ACCOUNT = t.ID_ACCOUNT AND
-					ap.ID_PRODUCT_CATEGORY = @ID_OPERACIONES_LIQUIDEZ)
-
-		--DERIVADOS
-		UPDATE t
-		SET t.ID_DERIVADOS =ISNULL(ap.ID_PRODUCT_CATEGORY,0)
-		FROM #temp_account_products_x_column t
-			LEFT JOIN #temp_account_products_x_row ap
-				on (ap.ID_ACCOUNT = t.ID_ACCOUNT AND
-					ap.ID_PRODUCT_CATEGORY = @ID_DERIVADOS)
-
-		--CUENTAS MARGEN
-		UPDATE t
-		SET t.ID_CUENTAS_MARGEN = ISNULL(ap.ID_PRODUCT_CATEGORY,0)
-		FROM #temp_account_products_x_column t
-			LEFT JOIN #temp_account_products_x_row ap
-				on (ap.ID_ACCOUNT = t.ID_ACCOUNT AND
-					ap.ID_PRODUCT_CATEGORY = @ID_CUENTAS_MARGEN)
-			
-		--OTRAS MONEDAS			
-		UPDATE t
-		SET t.ID_DIVISAS = ISNULL(ap.ID_PRODUCT_CATEGORY,0)
-		FROM #temp_account_products_x_column t
-			LEFT JOIN #temp_account_products_x_row ap
-				on (ap.ID_ACCOUNT = t.ID_ACCOUNT AND
-					ap.ID_PRODUCT_CATEGORY = @ID_DIVISAS)
-
-		--CARTERA
-		UPDATE t
-		SET t.ID_CARTERA =ISNULL(ap.ID_PRODUCT_CATEGORY,0)
-		FROM #temp_account_products_x_column t
-			LEFT JOIN #temp_account_products_x_row ap
-				on (ap.ID_ACCOUNT = t.ID_ACCOUNT AND
-					ap.ID_PRODUCT_CATEGORY = @ID_CARTERA)
-		
-		--FONDOS
-		UPDATE t
-		SET t.ID_FONDOS =ISNULL(ap.ID_PRODUCT_CATEGORY,0)
-		FROM #temp_account_products_x_column t
-			LEFT JOIN #temp_account_products_x_row ap
-				on (ap.ID_ACCOUNT = t.ID_ACCOUNT AND
-					ap.ID_PRODUCT_CATEGORY = @ID_FONDOS)
-
-		
-		--cuentas con posicion de fondos al corte y cuya totalidad de los fondos asociados no estan aprobados
-
-		/*Crear tabla con los fondos que fueron aprobados a traves de la interfaz de aprobacion de mercados*/
-		INSERT INTO #temp_funds_approved
-		SELECT * FROM  sta.CSVToTable(@ID_ASSET_LIST_AUX)
-
-		/*inserta las cuentas que tienen fondos pero que no han sido aprobados en su totalidad*/
-		INSERT INTO #temp_funds_pending_approved(ID_ACCOUNT)
-		SELECT ac.ID_ACCOUNT
-		FROM (SELECT
-					x.ID_ACCOUNT										  ID_ACCOUNT,
-					x.ID_PRODUCT_CATEGORY								  ID_PRODUCT_CATEGORY,
-					COUNT(1)											  NUM_TOTAL_FUND_X_ACCOUNT,
-					SUM(CASE WHEN (f.ID_ASSET IS NULL) THEN 0 ELSE 1 END) NUM_APPROVED_FUNDS
-				FROM (SELECT  t.ID_ACCOUNT,
-							t.ID_PRODUCT_CATEGORY,
-							t.ID_ASSET 
-					  FROM #temp_accountfunds_lastposition lp
-						INNER JOIN ODS.SECURITIES_BALANCE_TAX_LOT t  WITH(NOLOCK)
-							ON (t.DT_BALANCE = lp.DT_BALANCE AND
-								t.ID_ASSET = lp.ID_ASSET AND
-								t.ID_ACCOUNT = lp.ID_ACCOUNT)
-					  WHERE ISNULL(t.CD_BALANCE_TYPE,'TRAD') = 'TRAD'
-					  GROUP BY t.ID_ACCOUNT,t.ID_PRODUCT_CATEGORY,t.ID_ASSET)x
-				LEFT JOIN #temp_funds_approved f
-					ON (f.ID_ASSET = x.ID_ASSET)
-				GROUP BY ID_ACCOUNT,ID_PRODUCT_CATEGORY) ac
-		WHERE ac.NUM_TOTAL_FUND_X_ACCOUNT <> ac.NUM_APPROVED_FUNDS
-		
-		--Cuentas que tienen fondos pero la totalidad no ha sido aprobada, se les actualiza el campo 
-		--con el valor -99 para que no se generen
-		
-		UPDATE t
-		SET t.ID_FONDOS = -99
-		FROM #temp_account_products_x_column t
-			INNER JOIN #temp_funds_pending_approved ap
-				on (ap.ID_ACCOUNT = t.ID_ACCOUNT)
-
-	    --Cuentas que cumplen con la aprobacion de productos
-		INSERT INTO #temp_Generate_Monthly_Account(ID_ACCOUNT)
-		SELECT t.ID_ACCOUNT
-		FROM #temp_account_products_x_column t
-			INNER JOIN  @PRODUCT_LIST_TABLE_AUX  x
-				ON	(CASE WHEN t.ID_RENTA_FIJA = 0			 THEN 0 ELSE x.ID_RENTA_FIJA END) = t.ID_RENTA_FIJA AND
-					(CASE WHEN t.ID_RENTA_VARIABLE = 0		 THEN 0 ELSE x.ID_RENTA_VARIABLE END) = t.ID_RENTA_VARIABLE AND
-					(CASE WHEN t.ID_FONDOS = 0				 THEN 0 ELSE x.ID_FONDOS END) = t.ID_FONDOS AND
-					(CASE WHEN t.ID_OPERACIONES_LIQUIDEZ = 0 THEN 0 ELSE x.ID_OPERACIONES_LIQUIDEZ END) = t.ID_OPERACIONES_LIQUIDEZ AND
-					(CASE WHEN t.ID_DERIVADOS = 0			 THEN 0 ELSE x.ID_DERIVADOS END) = t.ID_DERIVADOS AND
-					(CASE WHEN t.ID_DIVISAS = 0				 THEN 0 ELSE x.ID_DIVISAS END) = t.ID_DIVISAS AND
-					(CASE WHEN t.ID_CUENTAS_MARGEN = 0		 THEN 0 ELSE x.ID_CUENTAS_MARGEN END) = t.ID_CUENTAS_MARGEN AND
-					(CASE WHEN t.ID_CARTERA = 0				 THEN 0 ELSE x.ID_CARTERA END) = t.ID_CARTERA 
-		
-		--Control utilizado para la funcionalidad de reproceso, si esta en 0 almacena las cuentas para generar
-		--extracto mensual que aun no han sido generadas, si es diferente de 0 retorna las cuentas que tienen
-		--todos los mercados aprobados y cuyo extracto ya fue generado
-		PRINT @INT_REPROCESS_AUX ;
-		IF @INT_REPROCESS_AUX = 0
-			BEGIN
-				INSERT INTO #temp_Monthly_Account_without_generating (ID_ACCOUNT)
-				SELECT a.ID_ACCOUNT
-				FROM #temp_Generate_Monthly_Account a 
-				WHERE a.ID_ACCOUNT NOT IN (SELECT ag.ID_ACCOUNT
-										   FROM dbBDC_Statement.dbo.TB_ACCOUNT_GENERATED ag
-										   WHERE ag.PROCESS_STATUS = @STATE_CREATED AND
-												 ag.CD_START_DATE = @DT_START_DATE_AUX AND
-												 ag.CD_END_DATE   = @DT_END_DATE_AUX)
-
-	            -- ***** CONTROL PARA CLIENTES INACTIVOS
-	
-	            -- Chequea saldos de cuentas inactivas en la hoja resumen
-	
-	            CREATE TABLE #tmpResumen(
-	                ID_ACCOUNT int,
-	                Id_Statement_Section    int,
-	                VISIBILITY  BIT ,
-	                APPLY_SUMMARY bit,
-	                SaldoActual                decimal(22,8),
-	                fechaActual                datetime,
-	                SaldoAnterior            decimal(22,8),
-	                fechaAnterior            datetime,
-	                PorcentajePortafolio    decimal(22,8),
-	                Variacion                decimal(22,8) ,
-	                GENERAR BIT)
-	
-	            DECLARE @ID_ACCOUNT_INAC int
-	            DECLARE @SaldoInactivo decimal(22,8)
-	
-	            SET @SaldoInactivo = (select strValor from dbBDC_Stages.dbo.tblparametros where strparametro = 'SaldoInactivo')
-	
-	            DECLARE cursorCtasInactivas CURSOR FOR   
-	                SELECT a.ID_ACCOUNT
-	                FROM #temp_Monthly_Account_without_generating a
-	                INNER JOIN COL.TB_ACCOUNT_CONFIGURATION ac
-	                    ON (ac.ID_ACCOUNT = a.ID_ACCOUNT AND
-	                        ac.ES_SEND_PORTFOLIO = @ES_SEND_PORTFOLIO)
-	                inner join (SELECT distinct l.ID_ACCOUNT FROM LE.TB_PARTY_RELATIONSHIP_PRODUCT_SERVICE l
-	                                    WHERE l.CD_PRODUCT_SERVICE_STATUS = 'INAC') Z
-	                on a.ID_ACCOUNT = Z.ID_ACCOUNT 
-	
-	
-	            OPEN cursorCtasInactivas
-	
-	            FETCH NEXT FROM cursorCtasInactivas  INTO @ID_ACCOUNT_INAC 
-	
-	            WHILE @@FETCH_STATUS = 0  
-	            BEGIN  
-	                insert into #tmpResumen(Id_Statement_Section, VISIBILITY, APPLY_SUMMARY, SaldoActual, fechaActual, SaldoAnterior, fechaAnterior, PorcentajePortafolio, Variacion)
-	                exec [sta].[SpGetSectionVisibilityList]  @ID_ACCOUNT_INAC ,@DT_START_DATE_AUX,@DT_END_DATE_AUX,0
-	
-	                update #tmpResumen set ID_ACCOUNT = @ID_ACCOUNT_INAC where ID_ACCOUNT is null
-	
-	                FETCH NEXT FROM cursorCtasInactivas INTO @ID_ACCOUNT_INAC
-	            END
-	
-	            CLOSE cursorCtasInactivas;  
-	            DEALLOCATE cursorCtasInactivas; 
-	
-	            -- Cuentas inactivas a las que se debe generar extracto
-	            UPDATE #tmpResumen set GENERAR = 1 where (SaldoActual > @SaldoInactivo) or (SaldoAnterior  > @SaldoInactivo)
-	
-	            -- Fin Chequea saldos en hoja resumen
-	
-	            -- Chequea movimientos de cartera de las cuentas inactivas
-	
-	            CREATE TABLE #tmpCarteraCtasInactivas(
-	                ID_ACCOUNT int,
-	                Fecha datetime,
-	                TipoOperaciom varchar(35),
-	                Detalle varchar(250),
-	                Valor decimal(22,2),
-	                GMF decimal(22,2),
-	                Retencion decimal(22,2),
-	                Reteica decimal(22,2),
-	                ValorNeto decimal(22,2),
-	                Saldo decimal(22,2) )
-	
-	
-	            SET @ID_ACCOUNT_INAC = 0
-	
-	            DECLARE cursorCtasInactivasCartera CURSOR FOR   
-	                    select distinct ID_ACCOUNT from #tmpResumen where ID_ACCOUNT not in(select distinct ID_ACCOUNT from #tmpResumen where GENERAR = 1)
-	
-	            OPEN cursorCtasInactivasCartera
-	
-	            FETCH NEXT FROM cursorCtasInactivasCartera  
-	            INTO @ID_ACCOUNT_INAC 
-	
-	            WHILE @@FETCH_STATUS = 0  
-	            BEGIN  
-	                insert into #tmpCarteraCtasInactivas(ID_ACCOUNT, Fecha, TipoOperaciom, Detalle, Valor, GMF, Retencion, Reteica, ValorNeto, Saldo )
-	                EXEC [sta].[SpGetCarteraClienteMovimientos] @ID_ACCOUNT_INAC,@DT_START_DATE_AUX,@DT_END_DATE_AUX
-	
-	                FETCH NEXT FROM cursorCtasInactivasCartera INTO @ID_ACCOUNT_INAC
-	            END
-	
-	            CLOSE cursorCtasInactivasCartera;  
-	            DEALLOCATE cursorCtasInactivasCartera; 
-	
-	            Update R set GENERAR = 1
-	            FROM #tmpResumen R inner join  #tmpCarteraCtasInactivas C on R.ID_ACCOUNT = C.ID_ACCOUNT 
-	            WHERE C.Detalle <> 'SALDO INICIAL'
-	
-	            -- Fin Chequea movimientos de cartera de las cuentas inactivas
-	
-	            -- Chequea movimientos de fondos de las cuentas inactivas
-	
-	            SELECT  CONVERT(INT,t.CD_PARTY_ACCOUNT) CD_PARTY_ACCOUNT,
-	                            t.ID_PRODUCT_CATEGORY
-	            INTO #tmpCtasFondos
-	            FROM ODS.TRADE t WITH(NOLOCK)
-	            INNER JOIN ODS.INVESTMENT_FUND_TRANSACTION ift WITH(NOLOCK)
-                        ON (ift.ID_TRADE = t.ID_TRADE AND
-	                        ift.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-	            INNER JOIN ODS.ASSET a    WITH(NOLOCK)
-	                    ON (a.ID_ASSET = t.ID_ASSET AND
-	                        a.ID_PRODUCT_CATEGORY = t.ID_PRODUCT_CATEGORY)
-	            WHERE t.ID_PRODUCT_CATEGORY = @ID_FONDOS
-	                    AND      t.DH_TRADE >= @DT_START_DATE_AUX
-	                    AND   t.DH_TRADE <= @DT_END_DATE_AUX
-	                    AND      ift.CD_TYPE NOT IN ('UT','UTX','RF')
-	
-	            UPDATE R set GENERAR = 1
-	            from #tmpResumen R inner join  
-	                (select distinct CD_PARTY_ACCOUNT from #tmpCtasFondos F inner join (select distinct ID_ACCOUNT  from #tmpResumen) I on F.CD_PARTY_ACCOUNT = I.ID_ACCOUNT  ) C 
-	                on R.ID_ACCOUNT = C.CD_PARTY_ACCOUNT
-	
-	            -- Fin Chequea movimientos de fondos de las cuentas inactivas
-	
-	            -- ***** FIN CONTROL PARA CLIENTES INACTIVOS
-	
-	            --Retorna las cuentas que tienen aprobados todos los productos ya sea para generacion mensual o reproceso y 
-	            --que se encuentran activas o bloqueadas, o estén inactivas pero se les deba generar extracto
-	
-	            SELECT a.ID_ACCOUNT
-	            FROM #temp_Monthly_Account_without_generating a
-	            INNER JOIN COL.TB_ACCOUNT_CONFIGURATION ac
-	                ON (ac.ID_ACCOUNT = a.ID_ACCOUNT AND
-	                    ac.ES_SEND_PORTFOLIO = @ES_SEND_PORTFOLIO)
-	            --INNER JOIN (SELECT distinct l.ID_ACCOUNT FROM LE.TB_PARTY_RELATIONSHIP_PRODUCT_SERVICE l
-	            --                    WHERE l.CD_PRODUCT_SERVICE_STATUS = 'ACTV') Z
-	            --    ON a.ID_ACCOUNT = Z.ID_ACCOUNT 
-	
-	            UNION ALL
-	
-	            -- cuentas inactivas que tienen saldo mayor al valor del parametro o que tiene algun movimiento de cartera, o tienen algun nmovimiento de fondos
-	            SELECT DISTINCT ID_ACCOUNT from #tmpResumen WHERE GENERAR = 1  
-
-			END
-		ELSE
-			BEGIN
-				INSERT INTO #temp_Monthly_Account_without_generating (ID_ACCOUNT)
-				SELECT a.ID_ACCOUNT
-				FROM #temp_Generate_Monthly_Account a 
-				WHERE a.ID_ACCOUNT IN (SELECT ag.ID_ACCOUNT
-										   FROM dbBDC_Statement.dbo.TB_ACCOUNT_GENERATED ag
-										   WHERE ag.PROCESS_STATUS = @STATE_CREATED AND
-												 ag.CD_START_DATE = @DT_START_DATE_AUX AND
-												 ag.CD_END_DATE   = @DT_END_DATE_AUX)
-
-				--retorna las cuentas que tienen aprobados todos los productos ya sea para generacion mensual o reproceso y 
-				
-
-				SELECT a.ID_ACCOUNT
-				FROM #temp_Monthly_Account_without_generating a
-					INNER JOIN COL.TB_ACCOUNT_CONFIGURATION ac
-						ON (ac.ID_ACCOUNT = a.ID_ACCOUNT AND ac.ES_SEND_PORTFOLIO = @ES_SEND_PORTFOLIO)
-			END
-		
-		--Borrar tablas temporales
-		DROP TABLE #temp_account_products_x_row 
-		DROP TABLE #temp_account_products_x_column	
-		DROP TABLE #temp_funds_pending_approved
-		DROP TABLE #temp_Generate_Monthly_Account
-		DROP TABLE #temp_Monthly_Account_without_generating
-		DROP TABLE #temp_funds_approved
-		DROP TABLE #tmp_posiciones_x_nominal_rf
-		DROP TABLE #tmp_garantias_rf
-		DROP TABLE #temp_accountfunds_lastposition
-		DROP TABLE #temp_accountfunds_lastposition_without_transfer
-	END TRY
-	BEGIN CATCH 
-		SET @strMsg = 'Error en el procedimiento ' + ERROR_PROCEDURE()
-		SET @strMsg = @strMsg + char(13) + 
-						' - Nro. Error ' + convert(varchar, error_number())  + char(13) +
-						error_message()
-		raiserror(@strMsg, 16, 1)
-	END CATCH
-END
-
-
-  trabaja todo con mayusculas los comandos
+""" Núcleo del Framework para la construcción de integraciones.
+ 
+Nucleo que administra el funcionamiento de integraciones creadas con el Framework
+de Integracion.
+ 
+"""
+import traceback
+import sys
+import os
+from abc import ABC, abstractmethod
+import threading
+import concurrent.futures
+import time
+from datetime import datetime, timedelta
+from queue import Queue
+import copy
+from uuid import uuid4
+from os import error, path
+import json
+import logging
+from logging.handlers import RotatingFileHandler
+
+from flask import Flask, request
+from flask_wtf.csrf import CSRFProtect
+
+################################### SCHEDULE #########################################
+
+
+class Schedule:
+    """ Clase Scheduler.
+
+    Permite  programar la ejecución de una integración.
+
+    Usage:
+
+        from ant_py import Schedule
+
+        schedule = [day, hour, minutes, seconds]
+    """
+    MONDAY = "MONDAY"
+    TUESDAY = "TUESDAY"
+    WEDNESDAY = "WEDNESDAY"
+    THURSDAY = "THURSDAY"
+    FRIDAY = "FRIDAY"
+    SATURDAY = "SATURDAY"
+    SUNDAY = "SUNDAY"
+
+    DAYS = {
+        MONDAY: 0,
+        TUESDAY: 1,
+        WEDNESDAY: 2,
+        THURSDAY: 3,
+        FRIDAY: 4,
+        SATURDAY: 5,
+        SUNDAY: 6}
+    DATE_BASE = datetime(2018, 1, 1, 0, 0, 0)
+    SECONDS_OF_WEEK = 604800
+
+    schedules = []
+
+    def __init__(self, plan: list = []):
+        """ Constructor de la clase. """
+        for event in plan:
+            if not isinstance(event, list):
+                raise Exception("Schedule error: plan must be a list")
+            elif len(event) < 4:
+                raise Exception(
+                    "Schedule error: plan must have 3 items: Day, hour, minutes and seconds")
+            else:
+                self.add_event(event[0], event[1], event[2], event[3])
+
+    def have_schedule(self):
+        """ Valida si se tiene schedules en la ejecución de una integración. """
+        if len(self.schedules) == 0:
+            return False
+        else:
+            return True
+
+    def date_differente(self, day: int, hour: int, minute: int, seconds: int):
+        """ Calcula la diferencia entre una fecha y hora enviada
+        contra la fecha base. """
+        date_objetive = datetime(2018, 1, 1 + day, hour, minute, seconds)
+        return (date_objetive - self.DATE_BASE).total_seconds()
+
+    def add_event(self, day: str, hour: int, minute: int, seconds: int):
+        """ Añade un evento a la lista de schedules """
+        if not day.upper() in self.DAYS.keys():
+            raise Exception('Wrong day!')
+
+        if hour < 0 or hour > 23:
+            raise Exception('Wrong hour!')
+
+        if minute < 0 or minute > 59:
+            raise Exception('Wrong minute!')
+
+        if seconds < 0 or seconds > 59:
+            raise Exception('Wrong second!')
+
+        difference = self.date_differente(
+            self.DAYS[day], hour, minute, seconds)
+        position = len(self.schedules)
+        for i in range(len(self.schedules)):
+            if self.schedules[i] == difference:
+                position = -2
+                break
+            elif self.schedules[i] > difference:
+                position = i
+                break
+        if position > -2:
+            self.schedules.insert(position, difference)
+
+    def next_execution(self, actual_date: datetime):
+        """ Calcula la próxima ejecución de la integración. """
+        if not self.have_schedule():
+            return 0, datetime.now()
+
+        difference = self.date_differente(actual_date.weekday(
+        ), actual_date.hour, actual_date.minute, actual_date.second)
+        next = -1
+        for i in range(len(self.schedules)):
+            if difference < self.schedules[i]:
+                next = i
+                break
+        if next == -1:
+            remaining_seconds = self.SECONDS_OF_WEEK - \
+                difference + self.schedules[0]
+        else:
+            remaining_seconds = self.schedules[next] - difference
+
+        return remaining_seconds, actual_date + timedelta(seconds=remaining_seconds)
+
+#################################### MESSAGE ##########################################
+
+
+class Message():
+    """ Clase constructora del objeto tipo Message.
+
+    Estructura del mensaje de entrada de una integración.
+
+    - header -- dict:
+        Contiene información general del mensaje que está siendo procesado.
+
+    - body -- list:
+        Contiene la información que hace parte del mensaje; al ser una lista
+        se pueden procesar varios datos en un solo mensaje y cada dato
+        debería ser puesto en una posición diferente de la lista.
+    """
+
+    def __init__(self):
+        """ Constructor de la clase. """
+        self.header = {}
+        self.body = []
+
+#################################### ERROR ##########################################
+
+
+class Error():
+    """ Clase constructora del objeto tipo Error.
+
+    Estructura de los errores que son generados en una integración.
+
+    - step -- str:
+        Paso en el que se encontró el error.
+    - type -- str:
+        Tipo de error, puede ser FUNCTIONAL o TECNICAL.
+    - description -- str:
+        Descripción del error.
+    - sent -- bool:
+        Es un booleano que define si el error fue enviado a la trazabilidad para
+        su tratamiento o no.
+    - body -- list:
+        Contiene los datos que generaron el error.
+    - id: -- str: Id del error.
+    """
+    FUNCTIONAL = 'FUNCTIONAL'
+    TECNICAL = 'TECNICAL'
+
+    def __init__(self):
+        """ Constructor de la clase. """
+        trace_back = self.get_trace_back()
+        self.tb_lineno = f'{trace_back[0]}: {trace_back[1]}'
+        self.funcname = trace_back[2]
+        self.source = trace_back[3]
+        self.step = ''
+        self.type = ''
+        self.description = ''
+        self.sent = False
+        self.body = []
+        self.id = ''
+
+    @staticmethod
+    def get_trace_back():
+        """
+        Método que obtiene el ultimo trace generado.
+
+        Returns:
+        ----------
+        filename: str
+            Nombre del archivo donde ocurrió el error.
+        linenum: str
+            Número de linea donde ocurrió el error.
+        funcname: str
+            Nombre del método en el cual ocurrió el error.
+        source: str
+            Linea que generó el error.
+        """
+        filename, linenum, funcname, source = None, None, None, None
+        exc_tb = sys.exc_info()
+        last_trace = len(traceback.extract_tb(exc_tb[2]))-1
+        filename, linenum, funcname, source = traceback.extract_tb(exc_tb[2])[
+            last_trace]
+        filename = os.path.basename(filename)
+        return filename, linenum, funcname, source
+
+#################################### PACKAGE ##########################################
+
+
+class Package():
+    """ Clase constructora del objeto tipo Package.
+
+    Estructura de los paquetes que son procesados en la integración.
+
+    - general_info -- dict:
+        Contiene información general de la integración.
+    - message_in -- Message:
+        Contiene la información del mensaje que está pasando por la integracion.
+    - message_out -- list:
+        Contiene la lista de respuestas de la integración.
+    - errors -- list:
+        Contiene la lista de errores de la integración.
+    - status -- str:
+        Contiene el estado del mensaje. Puede ser OK, ERROR o CRASH.
+    - desc_status -- str:
+        Descripción del estado en caso de ERROR o CRASH.
+    """
+    OK = 'OK'
+    CRASH = 'CRASH'
+    ERROR = 'ERROR'
+
+    def __init__(self):
+        """ Constructor de la clase. """
+        self.general_info = {'startTime': datetime.now(), 'messages': 0}
+        self.message_in = Message()
+        self.message_out = []
+        self.errors = []
+        self.status = ''
+        self.desc_status = ''
+
+#################################### TRACE ##########################################
+
+
+class Trace():
+    """ Clase base que define la forma en la que es manejada la trazabilidad y los errores
+    en una integración. """
+    # Tipos de trace
+    ERROR = 'ERROR'
+    INFO = 'INFO'
+    DEBUG = 'DEBUG'
+    CRASH = 'CRASH'
+
+    # Pipe en el que se genera el trace
+    PIPE_IN = 'IN'
+    PIPE_OUT = 'OUT'
+
+    # Valor por defecto para la depuración del trace
+    DEFAULT_DEPURATION_HOURS = 24
+
+    def __init__(self, **kwargs):
+        """ Constructor de la clase. """
+        self.__queue = Queue(maxsize=0)
+        self.__queue_error = Queue(maxsize=0)
+        self.unit_test = False
+
+    @abstractmethod
+    def do_trace(self, value):
+        """ Se ejecuta cuando se ha invocado un trace de tipo INFO o DEBUG. """
+
+    @abstractmethod
+    def error(self, value):
+        """ Se ejecuta cuando se ha generado un error en la integración. """
+
+    @abstractmethod
+    def crash(self, value):
+        """ Se ejecuta cuando se ha generado un error que no permite continuar
+        con el procesamiento del mensaje. """
+
+    def start(self, depuration_hours: int = DEFAULT_DEPURATION_HOURS, unit_test: bool = False):
+        """ Inicia la ejecución del trace, esta función está buscando permanentemente los
+        mensajes que hay en la cola de trazabilidad y de errores, en el momento en que
+        encuentra alguna información, ejecuta la función que debe procesar el TRACE o
+        ERROR.
+        """
+        self.unit_test = unit_test
+        last_depuration = datetime.now()
+        self.trace_init()
+        while True:
+            if (datetime.now() - last_depuration).total_seconds()/60/60 > depuration_hours:
+                last_depuration = datetime.now()
+                self.depure()
+            if not self.__queue_error.empty():
+                value = self.__queue_error.get()
+                if value['type'] == self.ERROR:
+                    self.error(value)
+                else:
+                    self.crash(value)
+                self.__queue_error.task_done()
+            elif not self.__queue.empty():
+                value = self.__queue.get()
+                if 'end' in value:
+                    self.trace_end()
+                    break
+                if value['type'] == self.INFO or value['type'] == self.DEBUG:
+                    self.do_trace(value)
+                    if 'package' in value:
+                        del value['package']
+                self.__queue.task_done()
+            else:
+                time.sleep(0.2)
+
+    def trace_init(self):
+        """ Se ejecuta una vez inicia el trace. """
+
+    def trace_end(self):
+        """ Se ejecuta cuando finaliza inicia el trace. """
+
+    def depure(self):
+        """ Se ejecuta cada vez que sea necesario hacer depuración del trace. """
+
+    def stop(self):
+        """ Debe ser invocada para parar el thread que maneja el trace. """
+        self.__queue.put({'end': 'end'})
+
+    @staticmethod
+    def validate_elapsed_time(name, package: Package, *args):
+        """ Utilizado cuando se quiera hacer un trace por tiempo. """
+
+        trace_name = 'last_trace' + name
+        if trace_name in package.general_info:
+            last_date = package.general_info[trace_name]
+        else:
+            last_date = package.general_info['startTime']
+        if (datetime.now() - last_date).seconds >= args[0][0]:
+            package.general_info[trace_name] = datetime.now()
+            valid = True
+        else:
+            valid = False
+        return valid
+
+    @staticmethod
+    def validate_number_records(name, package: Package, *args):
+        """ Utilizado cuando se quiera hacer trace por número de mensajes. """
+        return package.general_info['messages'] % int(args[0][0]) == 0
+
+    def __call__(self, type_trace, pipe, step, transaction_date, **args):
+        """ Método usado para ejecutar el trace """
+        data = {'type': type_trace,
+                'pipe': pipe,
+                'step': step,
+                'datetime': transaction_date}
+        for arg_name, value in args.items():
+            data[arg_name] = value
+        if type_trace in (Trace.ERROR, Trace.CRASH):
+            self.__queue_error.put(data)
+        else:
+            self.__queue.put(data)
+
+#################################### Source ##########################################
+
+
+class Source(ABC):
+    """ Clase base que define la estructura que debe tener todo adaptador de entrada. """
+
+    def __init__(self, **kwargs):
+        """ Inicializa el adaptador de entrada. """
+        self.__name = "Source"
+        for arg, value in kwargs.items():
+            if arg == 'name':
+                self.__name = value
+
+    def get_name(self):
+        """ Consulta del nombre del adaptador.
+
+        Note:
+        Existe por compatibilidad con versiones anteriores, pero no debe ser usada.
+        """
+        return self.name
+
+    @property
+    def name(self):
+        """ Consulta del nombre del adaptador. """
+        return self.__name
+
+    @name.setter
+    def name(self, value: str):
+        """ Define el nombre del adaptador. """
+        self.name = value
+
+    @abstractmethod
+    def __call__(self, executor, package: Package, index: int, tracer):
+        """ Ejecuta el adaptador.
+
+        - executor:
+            Función que el adaptador debe ejecutar del core, cuando
+            tenga un nuevo mensaje para procesar.
+        - package:
+            Paquete que se envía en la integración.
+        - index:
+            Número de hilo de ejecución (utilizado para ejecuciones en paralelo).
+        - tracer:
+            Función que el adaptador debe ejecutar para hacer trace.
+        """
+
+#################################### Destination ##########################################
+
+
+class Destination(ABC):
+    """ Clase base que define la estructura que debe tener todo adaptador de salida. """
+
+    def __init__(self, **kwargs):
+        """ Inicializa el adaptador de salida. """
+        self.__name = 'Destination'
+        for arg, value in kwargs.items():
+            if arg == 'name':
+                self.__name = value
+
+    @property
+    def name(self):
+        """ Consulta del nombre del adaptador. """
+        return self.__name
+
+    @name.setter
+    def name(self, value: str):
+        """ Define el nombre del adaptador. """
+        self.name = value
+
+    def get_name(self):
+        """ Consulta del nombre del adaptador.
+
+        Note:
+        Existe por compatibilidad con versiones anteriores, pero no debe ser usada. """
+        return self.name
+
+    @abstractmethod
+    def __call__(self, package: Package, index: int, tracer):
+        """ Ejecuta el adaptador.
+
+        - package:
+            Paquete que se envía en la integración.
+        - index:
+            Número de hilo de ejecución (utilizado para ejecuciones en paralelo).
+        - tracer:
+            Función que el adaptador debe ejecutar para hacer trace.
+            Ejecuta el adaptador. """
+
+    def rollback(self):
+        """ Se ejecuta cuando en medio de una transacción global, el adaptador debe hacer
+            rollback. """
+
+    def commit(self):
+        """ Se ejecuta cuando en medio de una transacción global, el adaptador debe hacer
+            rollback. """
+
+#################################### Step ##########################################
+
+
+class Step(ABC):
+    """ Clase que define la estructura que deben tener los Steps. """
+
+    def __init__(self, **args):
+        """ Inicializa el Step.
+
+        Esta clase es útil para inicializar conexiones y establecer
+        parámetros del Step. Aquí también se define el nombre del adaptador. """
+        self.__name = 'Step'
+        for arg, value in args.items():
+            if arg == 'name':
+                self.__name = value
+
+    @property
+    def name(self):
+        """ Consulta del nombre del adaptador. """
+        return self.__name
+
+    @abstractmethod
+    def __call__(self, package: Package) -> Package:
+        """ Consulta el nombre del adaptador. """
+
+################################# Pipe ######################################
+
+
+class Pipe(ABC):
+    """ Clase que define la estructura que tiene los pipes de entrada y salida. """
+
+    def __init__(self, route):
+        """ Inicializa el pipe. """
+        self.__steps = []
+        self.__trace = None
+        self.__crash = False
+        self.__end_type = ''
+        self.__errors = []
+        self.__route = route
+
+    def trace(self, name='', validate=None, *args):
+        """ Hace un un trace.
+
+        - name (opcional) -- str:
+            Nombre del trace.
+        - validate (opcional):
+            Tipo de validación a realizar, puede ser:
+                - Trace.validate_number_records.
+                - Trace.validate_elapsed_time.
+        - records (opcional):
+            Número de registros cuando el validate es: Trace.validate_number_records.
+        - time (opcional):
+            Tiempo en segundos cuando el validate es: Trace.validate_elapsed_time.
+        """
+        type_step = {
+            'type': 'trace',
+            'function': validate,
+            'name': name,
+            'args': args}
+        self.__steps.append(type_step)
+        return self
+
+    def _filter(self, arg):
+        """ Adiciona un filtro a la ejecución del Route. """
+        type_step = {'type': 'filter', 'filter': arg}
+        self.__steps.append(type_step)
+
+    @staticmethod
+    def validate_filter(package: Package, validation: str):
+        """ Filtra la información según la configuración hecha en un step Filter. """
+        result = True
+        error = False
+        desc_error = ""
+        response = []
+        for body in package.message_in.body:
+            try:
+                result = eval(validation)
+            except Exception as err:
+                error = True
+                desc_error = "Error in filter: " + str(err)
+                break
+            if result:
+                response.append(body)
+        package.message_in.body = response
+        return error, desc_error, package
+
+    def step(self, arg):
+        """  Instrucción para hacer trace dentro de un Route. """
+        if not callable(arg):
+            print('NO CALLEABLE')
+            self.__crash = True
+            self.__errors.append(
+                f'Step {str(len(self.__steps) + 1)} is not callable')
+        else:
+            print('CALLEABLE')
+            type_step = {'type': 'runnable', 'function': arg}
+            self.__steps.append(type_step)
+        return self
+
+    @property
+    def _steps(self):
+        """ Retona los pasos de un Pipe. """
+        return self.__steps
+
+    @classmethod
+    def _get_name(cls):
+        """ Consulta el nombre del Pipe. """
+        return 'Pipe'
+
+    def _crash(self, step, description, package: Package = None):
+        """ Hace el trace de un CRASH dentro del Pipe. """
+        self.__route._logger.error(self._format_message(description, step))
+        try:
+            if package:
+                if package.general_info.get('tb_lineno') is None:
+                    error = Error()
+                    description = f'{error.funcname}: {error.source} - {description}'
+                    package.general_info['tb_lineno'] = error.tb_lineno
+                package.status = package.CRASH
+                package.desc_status = description
+            if isinstance(self, PipeIn):
+                pipe = Trace.PIPE_IN
+            else:
+                pipe = Trace.PIPE_OUT
+            self.__route.trace(
+                type_trace=Trace.CRASH,
+                pipe=pipe,
+                step=step,
+                transaction_date=datetime.now(),
+                package=copy.deepcopy(package))
+        except Exception:
+            time.sleep(30)
+
+    # Metodos solo de uso interno del bus
+    def _format_message(self, description, step=None, package: Package = None):
+        """ Formato del mensaje para el trace. """
+        message = '[Route:{}]'.format(self._get_name())
+        if step:
+            message = message + '[Step:{}]'.format(step)
+        message = message + ' - ' + description
+        if package:
+            message = message + '\n' + '[Payload IN]: ' + \
+                str(package.message_in.body) + '\n' + \
+                '[Payload OUT]: ' + str(package.message_out)
+        return message
+
+    def __validate(self):
+        """ Valida si el Pipe finaliza correctamente. """
+        if not self.__end_type:
+            self.__crash = True
+            self.__errors.append('Destination required')
+
+#################################### PIPE IN ##########################################
+
+
+class PipeIn(Pipe):
+    """  Pipe de entrada del Route. """
+
+    def __init__(self, route, pipe_out):
+        """ Constructor del Pipe In. """
+        super(PipeIn, self).__init__(route)
+        self.__route = route
+        self.__pipe_out = pipe_out
+        self.__destinations = []
+        self.__parallel_dest = False
+        self.__source = None
+        self.__end_type = ''
+        self.__errors = []
+        self.__tracer = None
+
+    def source(self, arg=None):
+        """ Especifica la fuente de la información. """
+        if arg:
+            if not callable(arg):
+                self.__crash = True
+                self.__errors.append('Source is not callable')
+            else:
+                self.__source = arg
+        return self
+
+    def _get_name(self):
+        """ Consulta el nombre del Pipe. """
+        return 'PipeIN'
+
+    def filter(self, arg):
+        """ Retorna los steps de filtros. """
+        self._filter(arg)
+        return self
+
+    def to(self, *args):
+        """ Define los destinos. """
+        self.__destinations = self.__add_destinations(args, 'end_point')
+        self.__parallel_dest = False
+
+    def to_route(self, *args):
+        """ Define los destinos cuando son rutas. """
+        self.__destinations = self.__add_destinations(args, 'route')
+        self.__parallel_dest = False
+
+    def to_parallel(self, *args):
+        """ Define los destinos cuando se harán endpoints paralelos. """
+        self.__destinations = self.__add_destinations(args, 'end_point')
+        self.__parallel_dest = True
+
+    def to_route_parallel(self, *args):
+        """ Define los destinos cuando son rutas en paralelo. """
+        self.__destinations = self.__add_destinations(args, 'route')
+        self.__parallel_dest = True
+
+    def _start_unit_test(self, index):
+        """ Inicia la ejecucción para pruebas unitarias. """
+        try:
+            with open(self.__route.unit_test_file) as test_file:
+                data = json.load(test_file)
+        except Exception as error:
+            return Package.CRASH, "Error reading unit test file: " + \
+                str(error) + ". check JSON format"
+
+        try:
+            if not isinstance(data, list):
+                raise Exception('data in unit test file must be an array')
+            package = Package()
+            package.general_info['messages'] = len(data)
+            package.message_in.body = data
+            response = self._execute(package, index)
+        except Exception as error:
+            return Package.CRASH, str(error)
+
+        return response.status, response.desc_status
+
+    def _start(self, package, index, tracer):
+        """ Inicia la ejecucción del Pipe. """
+        self.__tracer = tracer
+        if self.__source:
+            try:
+                if self.__route.unit_test:
+                    status, description = self._start_unit_test(index)
+                else:
+                    status, description = self.__source(
+                        self._execute, package, index, tracer)
+                if status == package.CRASH:
+                    self._crash(self.__source.name, description, package)
+            except Exception as err:
+                self._crash(self.__source.name, str(err), package)
+        else:
+            if self.__route.unit_test:
+                status, description = self._start_unit_test(index)
+            else:
+                package = self._execute(package, index)
+
+    @property
+    def _destinations(self):
+        """ Obtiene los destinos que hacen parte del PipeIn. """
+        return self.__destinations
+
+    def __send_error_pipe(self, package: Package, step):
+        """ Envia los errores que se encuentran dentro del Package"""
+        errors = []
+        for error in package.errors:
+            if not error.sent:
+                package.general_info['errors'] = package.general_info['errors'] + 1
+                error.id = package.message_in.header.get('id')
+                errors.append(copy.deepcopy(error))
+                error.sent = True
+        if len(errors) > 0:
+            self.__route.trace(type_trace=Trace.ERROR, pipe=Trace.PIPE_IN,
+                               step=step,
+                               transaction_date=datetime.now(),
+                               errors=errors
+                               )
+        package.errors = []
+
+    def __execute_runnable(self, step, package: Package):
+        """ Ejecuta steps que se pueden correr """
+        is_error = False
+        try:
+            package = step['function'](package)
+            if package.status == package.CRASH:
+                self._crash(step['function'].name,
+                            package.desc_status, package)
+                is_error = True
+            elif package.status == package.ERROR or len(package.errors) > 0:
+                self.__send_error_pipe(package, step['function'].name)
+        except Exception as err:
+            self._crash(step['function'].name, str(err), package)
+            is_error = True
+
+        return not is_error
+
+    def _execute(self, package: Package, index: int):
+        """ Da las ordenes de ejecucción """
+        package.message_in.header = {}
+        package.message_in.header['startTime'] = datetime.now()
+        package.message_in.header["id"] = str(uuid4())
+        package.status = Package.OK
+        package.desc_status = ''
+        is_error = False
+        for step in self._steps:
+            if step['type'] == 'runnable':
+                if not self.__execute_runnable(step, package):
+                    is_error = True
+                    break
+                elif self.__route.unit_test:
+                    self.__route.trace(
+                        type_trace=Trace.INFO,
+                        pipe=Trace.PIPE_IN,
+                        step=step['name'],
+                        transaction_date=datetime.now(),
+                        package=copy.deepcopy(package)
+                    )
+            elif step['type'] == 'trace':
+                trace = True
+                if step['function']:
+                    trace = step['function'](
+                        step['name'], copy.deepcopy(package), step['args'])
+                if trace:
+                    self.__route.trace(type_trace=Trace.INFO, pipe=Trace.PIPE_IN,
+                                       step=step['name'], transaction_date=datetime.now(
+                                       ),
+                                       package=copy.deepcopy(package)
+                                       )
+            elif step['type'] == 'filter':
+                error, desc_error, package = Pipe.validate_filter(
+                    package, step['filter'])
+                if error:
+                    self._crash("filter", desc_error, package)
+                    is_error = True
+                    break
+                elif self.__route.unit_test:
+                    self.__route.trace(type_trace=Trace.INFO, pipe=Trace.PIPE_IN,
+                                       step="filter", transaction_date=datetime.now(),
+                                       package=copy.deepcopy(package)
+                                       )
+        if not is_error:
+            if self.__parallel_dest:
+                self.__execute_dest_parallel(package, self.__end_type, index)
+            else:
+                self.__execute_dest_serial(package, self.__end_type, index)
+            if package.status != Package.CRASH:
+                self.__pipe_out._execute(package)
+        return package
+
+    # Metodos solo de uso interno del bus
+    def __add_destinations(self, args, end_type):
+        """ Añade destinos a la lista de destinos """
+        destinations = []
+        count = 0
+        if not self.__end_type:
+            for arg in args:
+                count += 1
+                if not callable(arg) and end_type == 'end_point':
+                    self.__crash = True
+                    self.__errors.append(
+                        'Destination ' + str(count) + ' is not callable')
+                else:
+                    destinations.append(arg)
+        else:
+            self.__crash = True
+            self.__errors.append('Too many destinations')
+        self.__end_type = end_type
+        return destinations
+
+    def _execute_route(self, route: callable, package: Package, index: int):
+        """ Ejecuta una ruta """
+        route.slave = True
+        route.trace = self.__route.trace
+        route.global_transaction = self.__route.global_transaction
+        if self.__route.unit_test:
+            route.activate_unit_test(
+                self.__route.unit_test_file, self.__route.send_destinations)
+        package_dest = copy.deepcopy(package)
+        package_out = route.pipe_in()._execute(package_dest, index)
+        del package_dest
+        return package_out
+
+    def end_transaction(self, confirm: bool):
+        """ Termina las transacciones que se encuentran ejecuntandose """
+        for destination in self.__destinations:
+            if confirm:
+                destination.commit()
+            else:
+                destination.rollback()
+
+    def _execute_end_point(self, end_point: callable, package: Package, index: int):
+        """ Ejecuta los endpoints """
+        if (not self.__route.unit_test or (self.__route.unit_test
+                                           and self.__route.send_destinations)):
+            package_dest = copy.deepcopy(package)
+            status, desc_status, message = end_point(
+                copy.deepcopy(package), index, self._Pipe__route._Route__trace)
+            del package_dest
+            if status == Package.CRASH and not self.__route.global_transaction:
+                self._crash(end_point.name, str(package.desc_status), package)
+                package.status = package.ERROR
+                error = Error()
+                error.step = end_point.name
+                error.body = package.message_in.body
+                error.description = package.desc_status
+                error.sent = False
+                package.errors.append(error)
+                self.__send_error_pipe(package, end_point.name)
+
+            return status, desc_status, message
+        else:
+            return Package.OK, '', None
+
+    def __execute_dest_serial(self, package: Package, __end_type, index: int):
+        """ Ejecuta los destinos descritos de manera secuencial """
+        if __end_type == 'end_point':
+            need_rollback = False
+            dest_executed = []
+            if (not self.__route.unit_test or
+                    (self.__route.unit_test and self.__route.send_destinations)):
+                for destination in self.__destinations:
+                    try:
+                        status, desc_status, message = \
+                            self._execute_end_point(
+                                destination, package, index)
+                        package.status = status
+                        package.desc_status = desc_status
+                        if status == package.CRASH and self.__route.global_transaction:
+                            need_rollback = True
+                            break
+                        else:
+                            if not self.__route.global_transaction and not self.__route.slave:
+                                destination.commit()
+                        dest_executed.append(destination)
+                        if status != package.CRASH and message:
+                            package.message_out.append(message)
+                    except Exception as err:
+                        self._crash(destination.name, str(err), package)
+                        need_rollback = True
+                        break
+                if self.__route.global_transaction:
+                    for dest in dest_executed:
+                        if need_rollback:
+                            dest.rollback()
+                        elif not self.__route.slave:
+                            dest.commit()
+        else:
+            message_out = []
+            dest_executed = []
+            for destination in self.__destinations:
+                try:
+                    package_out = self._execute_route(
+                        destination, package, index)
+                    if package_out.status == package.CRASH:
+                        self._crash(destination.name,
+                                    package_out.desc_status, package)
+                        if self.__route.global_transaction:
+                            for dest in dest_executed:
+                                dest.end_transaction(False)
+                        break
+                    else:
+                        for message in package_out.message_out:
+                            message_out.append(message)
+                        dest_executed.append(destination)
+                    del package_out
+                except Exception as err:
+                    self._crash(destination.name, str(err), package)
+                    break
+            package.message_out = message_out
+        return package
+
+    def __execute_dest_parallel(self, package, __end_type, index: int):
+        """ Ejecuta los destinos de forma paralela """
+        if __end_type == 'end_point':
+            if (not self.__route.unit_test or
+                    (self.__route.unit_test and self.__route.send_destinations)):
+                need_rollback = False
+                package.desc_status = ''
+                with concurrent.futures.ThreadPoolExecutor(max_workers=len(self.__destinations))\
+                        as executor:
+                    result = {executor.submit(self._execute_end_point, destination, package,
+                                              index, self.__tracer):
+                              destination
+                              for destination in self.__destinations}
+
+                    for future in concurrent.futures.as_completed(result):
+                        try:
+                            status, desc_status, message = future.result()
+                            if status in (package.ERROR, package.CRASH):
+                                package.status = status
+                                package.desc_status = package.desc_status + ' ' + desc_status
+                            if status != package.CRASH and message:
+                                package.message_out.append(message)
+                                need_rollback = True
+
+                        except Exception as exc:
+                            self._crash('executing ' + result[future] + ' in parallel',
+                                        'exception:' + str(exc), package)
+                    if need_rollback:
+                        for destination in self.__destinations:
+                            destination.rollback()
+                    elif self.__route.global_transaction and not self.__route.slave:
+                        for destination in self.__destinations:
+                            destination.commit()
+        else:
+            package.desc_status = ''
+            need_rollback = False
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(self.__destinations))\
+                    as executor:
+                result = {executor.submit(self._execute_route, destination, package, index):
+                          destination for destination in self.__destinations}
+                for future in concurrent.futures.as_completed(result):
+                    try:
+                        package_out = future.result()
+                        if package_out.status in (package_out.ERROR, package_out.CRASH):
+                            package.status = package_out.status
+                            package.desc_status = package.desc_status + ' '\
+                                + package_out.desc_status
+                        if package_out.status != package_out.CRASH:
+                            package.message_out.append(package_out.message_out)
+                            need_rollback = False
+                    except Exception as exc:
+                        self._crash('executing ' + result[future] + ' in parallel',
+                                    'exception:' + str(exc), package)
+                    if need_rollback:
+                        for destination in self.__destinations:
+                            destination.rollback()
+                    elif self.__route.global_transaction and not self.__route.slave:
+                        for destination in self.__destinations:
+                            destination.commit()
+        return package
+
+#################################### PIPE OUT ##########################################
+
+
+class PipeOut(Pipe):
+    """ Clase abstracta para el PipeOut """
+
+    def __init__(self, route):
+        super(PipeOut, self).__init__(route)
+        self.__route = route
+
+    def _get_name(self):
+        """ Obtiene el nombre del Pipe """
+        return 'PipeOut'
+
+    def _execute(self, package):
+        """ Ejecuta el Pipe """
+        for step in self._steps:
+            if step['type'] == 'runnable':
+                try:
+                    package = step['function'](package)
+                    if package.status == package.CRASH:
+                        self._crash(step['function'].name,
+                                    package.desc_status, package)
+                        break
+                except Exception as err:
+                    self._crash(step['function'].name, str(err), package)
+                    break
+            elif step['type'] == 'trace':
+                self.__route.trace(type_trace=Trace.INFO, step=step['name'], pipe=Trace.PIPE_OUT,
+                                   transaction_date=datetime.now(), package=copy.deepcopy(package))
+
+############################### ROUTE ######################################
+
+
+class Route():
+    """
+        Description
+        -----------
+        Permite definir todos los pasos de una integración.
+
+        Properties
+        ----------
+        pipe_in (Pipe): Son los pasos necesarios para enviar información desde un origen hasta 1 o
+                 varios destinos. Un pipe_in siempre debería comenzar con un source
+                 (fuente de la  información) y terminar con un destino (pueden ser adaptadores
+                 o nuevos routes).
+
+        pipe_out (Pipe): Son los pasos que procesan las respuestas de las integraciones
+
+        global_transaction (bool): Define si la integración maneja una transacción global
+                            para toda la integración (que incluye source y destinos) o no.
+"""
+
+    def __init__(self, name):
+        self.__crash = False
+        self.__errors = []
+        self.name = name
+        self.__pipe_out = PipeOut(self)
+        self.__pipe_in = PipeIn(self, self.__pipe_out)
+        self.__trace = None
+        self.global_transaction = True
+        self.__unit_test = False
+        self.__unit_test_file = ""
+        self.__send_destinations = False
+        self.__slave = False
+        self.__logger = Route.create_rotating_log()
+        self.__thread_service = None
+
+    @staticmethod
+    def create_rotating_log():
+        """
+            Creates a rotating log
+        """
+        logger = logging.getLogger("bus")
+
+        handler = RotatingFileHandler(
+            "bus.log", maxBytes=209715200, backupCount=5)
+        formatter = logging.Formatter(
+            '[%(asctime)s]:[%(levelname)s]:%(message)s')
+        formatter.datefmt = '%d-%b-%y %H:%M:%S'
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        return logger
+
+    @property
+    def _logger(self):
+
+        return self.__logger
+
+    @property
+    def slave(self) -> bool:
+        return self.__slave
+
+    @slave.setter
+    def slave(self, value: bool):
+        self.__slave = value
+
+    @property
+    def global_transaction(self):
+        """
+            Descripcion:
+        """
+        return self.__global_transaction
+
+    @global_transaction.setter
+    def global_transaction(self, value: bool):
+        """
+            Descripcion:
+        """
+        self.__global_transaction = value
+
+    @property
+    def unit_test(self):
+        """
+            Descripcion:
+        """
+        return self.__unit_test
+
+    @property
+    def unit_test_file(self):
+        """
+            Descripcion:
+        """
+        return self.__unit_test_file
+
+    @property
+    def send_destinations(self):
+        """
+            Descripcion:
+        """
+        return self.__send_destinations
+
+    def activate_unit_test(self, file: str, send_destinations: bool):
+        """
+            Descripcion:
+        """
+        if not file:
+            raise Exception(
+                f'the file not provided, is not possible to run unit test')
+
+        if not path.isfile(file):
+            raise Exception(
+                f'the file {file} does not exists, is not possible to run unit test')
+        self.__unit_test = True
+        self.__unit_test_file = file
+        self.__send_destinations = send_destinations
+
+    def pipe_in(self) -> PipeIn:
+        """
+            Descripcion:
+        """
+        return self.__pipe_in
+
+    def pipe_out(self) -> PipeOut:
+        """
+            Descripcion:
+        """
+        return self.__pipe_out
+
+    @property
+    def trace(self):
+        """
+            Descripcion:
+        """
+        return self.__trace
+
+    @trace.setter
+    def trace(self, tracer: callable):
+        """
+            Descripcion:
+        """
+        if not callable(tracer):
+            self.__crash = True
+            self.__errors.append('Trace is not callable')
+        else:
+            self.__trace = tracer
+
+    def set_trace(self, arg):
+        """
+            Descripcion:
+        """
+        self.trace = arg
+
+    @classmethod
+    def version(cls):
+        """
+            Descripcion:
+        """
+        return '1.0.0'
+
+    def __start_trace(self):
+        """
+            Descripcion: Inicia la el hilo para el manejo del trace
+        """
+        thread_trace = threading.Thread(target=self.__trace.start,
+                                        args=(self.__trace.DEFAULT_DEPURATION_HOURS,
+                                              self.unit_test))
+        thread_trace.start()
+
+    def __stop_trace(self):
+        """
+            Descripcion:
+        """
+        self.__trace.stop()
+
+    def _do_trace(self, type_trace, pipe, step, description):
+        self.__trace(type_trace=type_trace, pipe=pipe, step=step,
+                     transaction_date=datetime.now(), description=description
+                     )
+
+    def __start(self, threads: int, schedule: Schedule):
+        self.__validate()
+        if not self.__crash:
+            try:
+                self.__start_trace()
+            except Exception as err:
+                self.__errors.append('Error starting trace' + str(err))
+                self.__send_error()
+                return
+            while True:
+                if schedule.have_schedule():
+                    # if route has a schedula sleep until next date
+                    seconds, next_date = schedule.next_execution(
+                        datetime.now())
+                    time.sleep(seconds)
+
+                if threads == 1:
+                        package = Package()
+                        # Falta mirar como avisarle a los adaptadores de entrada
+                        # que corran una sola vez
+                        self.__pipe_in._start(package, 0, self._do_trace)
+
+                else:
+                    try:
+                        work_lst = []
+                        for index in range(threads):
+                            package = Package()
+                            work_lst.append(threading.Thread(
+                                target=self.__pipe_in._start,
+                                args=(package, index, self._do_trace,)))
+                            work_lst[index].start()
+
+                        for work in work_lst:
+                            work.join()
+
+                    except Exception as err:
+                        self.__errors.append(
+                            'Error creating threads' + str(err))
+                        self.__send_error()
+
+                if self.unit_test or not schedule.have_schedule():
+                    # Evaluate if route does not hava a schedule or if it is a unit test
+                    break
+
+            self.__trace.stop()
+            if self.__thread_service:
+                self.__thread_service.join()
+        else:
+            self.__send_error()
+
+    def start(self, schedule: Schedule = Schedule()):
+        """
+            Procedimiento que inicia la integración con un solo hilo de ejecución
+        """
+        self.__start(1, schedule)
+
+    def start_parallel(self, threads: int, schedule: Schedule = Schedule()):
+        """
+            Procedumiento que inicia la integración con varios hilos de ejecución
+
+            args:
+                threads (int): número de hilos.
+        """
+        self.__start(threads, schedule)
+
+    def close(self):
+        """
+            Descripcion:
+        """
+        del self.pipe_in
+        del self.pipe_out
+
+    def __validate(self):
+        """
+            Descripcion:
+        """
+        if not self.__pipe_in._steps and not self.__pipe_in._destinations:
+            self.__crash = True
+            self.__errors.append('Steps or Destination required')
+
+    def __send_error(self):
+        """
+            Descripcion:
+        """
+        for desc_error in self.__errors:
+            self._logger.error(desc_error)
+
+    @staticmethod
+    def start_service(port: int, executor: callable, version: callable):
+        """
+            Description:
+        """
+
+        csrf = CSRFProtect()
+        app = Flask("service")
+        csrf.init_app(app)
+
+        @app.route("/version", methods=['GET'])
+        def versionREST():
+            try:
+                response = version()
+            except Exception as error:
+                response = "Error executing version function " + str(error)
+            return response
+        if executor is not None:
+            @app.route("/", methods=['GET', 'POST'])
+            def service():
+                response = {'status': 'OK', 'description': ''}
+                try:
+                    response["status"] = Package.OK
+                    response["description"] = 'OK'
+                    return response
+                except Exception as error:
+                    response["status"] = Package.CRASH
+                    response["description"] = str(error)
+                    return response
+
+    def activate_service(self, port=9991, reprocess=True, version: callable = None):
+        """
+            Description:
+        """
+        try:
+            import flask
+        except Exception as error:
+            self.trace(type_trace=Trace.CRASH, pipe=Pipe, step="activate_service: " + str(error),
+                       transaction_date=datetime.now(), package=None)
+            return
+        if version is None:
+            version = self.version
+
+        if reprocess:
+            reprocess_function = self.__pipe_in._execute
+        else:
+            reprocess_function = None
+
+        self.__thread_service = threading.Thread(target=Route.start_service,
+                                                 args=(port, reprocess_function, version))
+        self.__thread_service.start()
+        time.sleep(1)
