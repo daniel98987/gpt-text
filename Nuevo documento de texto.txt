@@ -1,217 +1,631 @@
-using BTG.Statement.Builder.CreditosMasivo.DAO.Obj;
+using BTG.Statement.Builder.UnifiedMonthly.DAO.Obj;
 using BTG.Statement.Core.Handlers;
 using BTG.Statement.Core.Handlers.Builder;
+using BTG.Statement.Core.Helper;
 using BTG.Statement.DAO.DAL.Class;
-using BTG.Statement.DAO.Dal_Report.Messages;
+using BTG.Statement.DAO.Datasource;
+using BTG.Statement.ErrorHandler;
+using BTG.Statement.Messages.Entities;
+using BTG.Statement.Messages.Enumerators;
 using BTG.Statement.Messages.Values;
+
 using ClosedXML.Excel;
-using Microsoft.Reporting.WebForms;
+
+using Microsoft.Reporting.WinForms;
 using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
+using System.Linq;
+using System.Text;
 using System.Threading;
 
-namespace BTG.Statement.Builder.CreditosMasivo.Process
+namespace BTG.Statement.Builder.UnifiedMonthly.Process
 {
-	public class MassiveProcess
-	{
-		public void Procesar(ParametrosExtracto parametrosExtracto)
-		{
-			BuildPetitionHandler buildPetitionHandler = new BuildPetitionHandler();
-			ReportViewer report = null;
-			int bloque = parametrosExtracto.PosBloqueXIteracion;
-			int hilo = parametrosExtracto.Hilo;
-			int contadorExtractos = 1;
-			int cantExtractosXInstanciaRV = parametrosExtracto.CantExtractosXInstanciaReportViewer;
-			bool blnReinstanciarReportViewer = true;
-			string archivoLogExtractoCliente = parametrosExtracto.RutaPpal + @"\Log_Hilo" + hilo + ".txt";
-			buildPetitionHandler.EscribirLog("************************************************************************************", archivoLogExtractoCliente);
-			try
-			{
-				foreach (var t in parametrosExtracto.ListaProductosPeticion)
-				{
-					if (blnReinstanciarReportViewer)
-					{
-						blnReinstanciarReportViewer = false;
-						if (report != null)
-						{
-							report.LocalReport.ReportPath = null;
-							report.LocalReport.ReleaseSandboxAppDomain();
-							report.LocalReport.Dispose();
-							report = null;
-						}
+    public class MassiveProcess
+    {
+        public  string UnifiedMonthlyEmailFolder;
+        public  string UnifiedMonthlyNoEmailFolder;
 
-						report = new ReportViewer
-						{
-							ProcessingMode = ProcessingMode.Local,
-							ShowExportControls = false,
-							ShowPrintButton = true,
-							ShowZoomControl = true,
-							SizeToReportContent = false,
-							ShowReportBody = true,
-							ShowDocumentMapButton = false,
-							ShowFindControls = true
-						};
+        public MassiveProcess()
+        {
+            UnifiedMonthlyEmailFolder = AppConfigManager.UnifiedMonthlyEmailFolder;
+            UnifiedMonthlyNoEmailFolder = AppConfigManager.UnifiedMonthlyNoEmailFolder;
+        }
+        public void Procesar(ParametrosExtracto parametrosExtracto)
+        {
+            BuildPetitionHandler buildPetitionHandler = new BuildPetitionHandler();
+            DataSourceMassiveProcess dataSourceMassiveProcess = new DataSourceMassiveProcess();
+            ReportViewer report = null;
+            int bloque = parametrosExtracto.PosBloqueXIteracion;
+            int hilo = parametrosExtracto.Hilo;
+            int contadorExtractos = 1;
+            int cantExtractosXInstanciaRV = parametrosExtracto.CantExtractosXInstanciaReportViewer;
+            bool blnReinstanciarReportViewer = true;
+            string archivoLogExtractoCliente = parametrosExtracto.RutaCreacionLogHilos + @"\Log_Hilo" + hilo + ".txt";
+            buildPetitionHandler.EscribirLog("************************************************************************************", archivoLogExtractoCliente);
+            try
+            {
+                foreach (var t in parametrosExtracto.ListaCuentasPeticion)
+                {
+                    if (blnReinstanciarReportViewer)
+                    {
+                        blnReinstanciarReportViewer = false;
+                        if (report != null)
+                        {
+                            report.LocalReport.ReportPath = null;
+                            report.LocalReport.ReleaseSandboxAppDomain();
+                            report.LocalReport.Dispose();
+                            report = null;
+                        }
 
-						report.LocalReport.ReportPath = parametrosExtracto.ReporteRdlc;
-					}
-					else
-					{
-						if (cantExtractosXInstanciaRV > 50 && contadorExtractos % cantExtractosXInstanciaRV == 0)
-						{
-							blnReinstanciarReportViewer = true;
-						}
-					}
+                        report = new ReportViewer();
 
-					report.LocalReport.DataSources.Clear();
-					report.LocalReport.EnableHyperlinks = true;
-					RenderReport(t.ToString(), report, parametrosExtracto, bloque, hilo, buildPetitionHandler, archivoLogExtractoCliente);
-					contadorExtractos += 1;
-				}
-			}
-			catch (Exception ex)
-			{
-				buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | PASO 1. " +
-					"Ocurrió un error creando la instancia del reporte: " + ex.Message + " " + ex.InnerException, archivoLogExtractoCliente);
-			}
-		}
+                        report.LocalReport.ReportPath = parametrosExtracto.ReporteRdlc;
+                    }
+                    else
+                    {
+                        if (cantExtractosXInstanciaRV > 50 && contadorExtractos % cantExtractosXInstanciaRV == 0)
+                        {
+                            blnReinstanciarReportViewer = true;
+                        }
+                    }
 
-		private static void RenderReport(string idCredito,
-										ReportViewer report,
-										 ParametrosExtracto parametrosExtracto,
-										 int bloque,
-										 int hilo,
-										 BuildPetitionHandler buildPetitionHandler,
-										 string archivoLogExtractoCliente)
-		{
-			DateTime InicioGeneracion = DateTime.Now;
-			int intPasoEjecucion = 1;
-			byte[] renderedBytes = null;
-			MassivePetitionHandler mph = new MassivePetitionHandler();
-			DalCertificate dl = new DalCertificate();
-			DataRow infoLog;
-			try
-			{
-				buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | CREDITO: " + idCredito + " | PASO " + (intPasoEjecucion++) +
-					". Se consulta la información del cliente para generar el Extracto", archivoLogExtractoCliente);
-				DataSet dsInformationByProduct = new DataSet();
-				GeneratorHandler generatorHandler = new GeneratorHandler();
-				dsInformationByProduct = mph.ConsultarInformacionExtractoCredito(idCredito, parametrosExtracto.FechaInicio, parametrosExtracto.FechaFin);
-				parametrosExtracto.DsEncabezado = new ReportDataSource("dsEncabezado", dsInformationByProduct.Tables[0]);
-				parametrosExtracto.DsDatosObligacion = new ReportDataSource("dsDatosObligacion", dsInformationByProduct.Tables[1]);
-				parametrosExtracto.DsDatosCuotas = new ReportDataSource("dsDatosCuotas", dsInformationByProduct.Tables[2]);
-				parametrosExtracto.DsMovimientos = new ReportDataSource("dsMovimientos", dsInformationByProduct.Tables[3]);
-				infoLog = dsInformationByProduct.Tables[4].Rows[0];
-				buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | CREDITO: " + idCredito + " | PASO " + (intPasoEjecucion++) +
-					". Se obtuvieron los registros para generar el Extracto", archivoLogExtractoCliente);
-				bool productoBloqueado = false;
-				string codigoUnicoCliente = string.Empty;
-				if (dsInformationByProduct.Tables.Count > 0 && dsInformationByProduct.Tables[4].Rows.Count > 0)
-				{
-					productoBloqueado = (bool)dsInformationByProduct.Tables[4].Rows[0]["Estado"];
-					codigoUnicoCliente = dsInformationByProduct.Tables[4].Rows[0]["CodigoUnicoCliente"].ToString();
-				}
+                    report.LocalReport.DataSources.Clear();
+                    report.LocalReport.EnableHyperlinks = true;
+                    RenderReport(t.ToString(), report, parametrosExtracto, bloque, hilo, buildPetitionHandler, archivoLogExtractoCliente, dataSourceMassiveProcess);
+                    contadorExtractos += 1;
+                }
+            }
+            catch (Exception ex)
+            {
+                buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | PASO 1. " +
+                    "Ocurrió un error creando la instancia del reporte: " + ex.Message + " " + ex.InnerException, archivoLogExtractoCliente);
+            }
+        }
 
-				report.LocalReport.SetParameters(SetParametersReportViewerList(idCredito, parametrosExtracto.FechaInicio, parametrosExtracto.FechaFin));
-				report.LocalReport.DataSources.Add(parametrosExtracto.DsEncabezado);
-				report.LocalReport.DataSources.Add(parametrosExtracto.DsDatosObligacion);
-				report.LocalReport.DataSources.Add(parametrosExtracto.DsDatosCuotas);
-				report.LocalReport.DataSources.Add(parametrosExtracto.DsMovimientos);
-				Random r = new Random();
-				var x = r.Next(0, 1000000);
-				string Rad = x.ToString("000000");
-				string[] formatos = parametrosExtracto.Format.Split(',');
-				foreach (string formato in formatos)
-				{
-					string filename = parametrosExtracto.FechaFin.ToString("yyyyMMdd");
-					filename += "_ExtractoCredito_";
-					filename += idCredito.Substring(idCredito.Length - 7, 7);
-					filename += codigoUnicoCliente;
-					filename += "." + formato.ToLower();
-					string ruta = string.Empty; //(productoBloqueado ? parametrosExtracto.RutaGeneracionExtractosBloqueados : parametrosExtracto.RutaGeneracionExtractos) + @"\" + filename;
-					//string tipoArchivo = MessageConfiguration.ReportExportRenderPDF;
-					buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | CREDITO: " + idCredito + " | PASO " + (intPasoEjecucion++) +
-						". Comienza el renderizado del Extracto", archivoLogExtractoCliente);
-					switch (formato.ToLower())
-					{
-						case FileFormat.PDF:
-							renderedBytes = report.LocalReport.Render("PDF");
-							ruta = (productoBloqueado ? parametrosExtracto.RutaGeneracionextractosBloqueadosPDF : parametrosExtracto.RutaGeneracionextractosPDF) + @"\" + filename;
-							break;
-						case FileFormat.Excel:
-							renderedBytes = report.LocalReport.Render("Excel");
-							ruta = (productoBloqueado ? parametrosExtracto.RutaGeneracionextractosBloqueadosEXCEL : parametrosExtracto.RutaGeneracionextractosExcel) + @"\" + filename;
-							break;
-						case FileFormat.ExcelOpenXML:
-							renderedBytes = report.LocalReport.Render("EXCELOPENXML");
-							ruta = (productoBloqueado ? parametrosExtracto.RutaGeneracionextractosBloqueadosEXCEL : parametrosExtracto.RutaGeneracionextractosExcel) + @"\" + filename;
-							break;
-					}
+        private  DataRow InitInfoLogGenericData()
+        {
+            DataTable table = new DataTable();
+            table.Columns.Add("TipoEnvio", typeof(string));
+            table.Columns.Add("NombreDeLaCuenta", typeof(string));
+            table.Columns.Add("NoCuenta", typeof(string));
+            table.Columns.Add("NombreDelCliente", typeof(string));
+            table.Columns.Add("NoArchivosPDF", typeof(string));
+            table.Columns.Add("NoArchivosTXT", typeof(string));
+            table.Columns.Add("NoDeMercados", typeof(string));
+            table.Columns.Add("DescripcionDeLosMercados", typeof(string));
+            table.Columns.Add("Error", typeof(string));
 
-					///report.LocalReport.SubreportProcessing -= sr;
-					report.LocalReport.Refresh();
-					//SE ESCRIBE EL Extracto EN LA RUTA DESTINO
-					buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | CREDITO: " + idCredito + " | PASO " + (intPasoEjecucion++) +
-						". Escribiendo el Extracto en la ruta física especificada", archivoLogExtractoCliente);
-					System.IO.File.WriteAllBytes(ruta, renderedBytes);
-					buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | CREDITO: " + idCredito + " | PASO " + (intPasoEjecucion++) +
-						". Finaliza la creación del Extracto", archivoLogExtractoCliente);
-					//SE ENVÍA LA INFORMACIÓN BÁSICA DEL Extracto A LA TABLA GENEREACION_ExtractoS
-					buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | CREDITO: " + idCredito + " | PASO " + (intPasoEjecucion++) +
-						". Se envia la información del Extracto a la tabla de generación Extractos en base de datos", archivoLogExtractoCliente);
-					dl.BcoInsertCertificadoGeneradoXIdPeticion(parametrosExtracto.IdPeticion, idCredito.ToString(), filename, true);
-					buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | CREDITO: " + idCredito + " | PASO " + (intPasoEjecucion++) +
-						". La información del Extracto quedó almacenada en la tabla generación Extractos de la base de datos", archivoLogExtractoCliente);
-					buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | CUECREDITONTA: " + idCredito + " | PASO " + (intPasoEjecucion++) +
-					". Se envia la información del Extracto a la tabla de logs en base de datos", archivoLogExtractoCliente);
-					dl.BcoInsertLogGenerate(infoLog, filename, InicioGeneracion, idCredito, parametrosExtracto.Identificador);
-					buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | CREDITO: " + idCredito + " | PASO " + (intPasoEjecucion++) +
-						". La información del Extracto quedó almacenada en la tabla logs de la base de datos", archivoLogExtractoCliente);
-					buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | CREDITO: " + idCredito + " | PASO " + (intPasoEjecucion++) +
-						". Finaliza la generación del extracto para este cliente", archivoLogExtractoCliente);
-				}
-			}
-			catch (Exception ex)
-			{
-				buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | CREDITO: " + idCredito + " | PASO " + (intPasoEjecucion++) +
-					". Ocurrió un error generando el extracto para este cliente: " + ex.Message + " - " + ex.InnerException, archivoLogExtractoCliente);
-				Console.WriteLine(" & ERROR generando el Extracto para el crédito" + idCredito + ": " + ex.Message + " - " + ex.InnerException);
-			}
-		}
+            DataRow infoLog = table.NewRow();
+            // Inicializa los valores con valores predeterminados
+            infoLog["TipoEnvio"] = "";
+            infoLog["NombreDeLaCuenta"] = "";
+            infoLog["NoCuenta"] = "000000";
+            infoLog["NombreDelCliente"] = "";
+            infoLog["NoArchivosPDF"] = "0";
+            infoLog["NoArchivosTXT"] = "0";
+            infoLog["NoDeMercados"] = "0";
+            infoLog["DescripcionDeLosMercados"] = "";
+            infoLog["Error"] = "";
+            return infoLog;
 
-		private static List<ReportParameter> SetParametersReportViewerList(string idCredito
-																		   , DateTime fechaInicio
-																		   , DateTime fechaFin)
-		{
-			List<ReportParameter> parameters = new List<ReportParameter>
-			{
-				new ReportParameter(ParemeterName.ReportStartDate, fechaInicio.ToString("dd/MM/yyyy")),
-				new ReportParameter(ParemeterName.ReportEndDate, fechaFin.ToString("dd/MM/yyyy")),
-				new ReportParameter(ParemeterName.ID_CREDIT , idCredito.ToString())
-		};
+        }
+        private  void InitInfoLogGenericDataAccount(DataRow infoLog, Account account)
+        {
 
-			return parameters;
-		}
+            if (account != null)
+            {
+                infoLog["TipoEnvio"] = account.EmailDelivery == true ? UnifiedMonthlyEmailFolder : UnifiedMonthlyNoEmailFolder;
+                if (account.AccountName != null)
+                {
+                    infoLog["NombreDeLaCuenta"] = account.AccountName;
 
-		public static void CreateExcel(DataTable dt, string Nombre, string ruta, BuildPetitionHandler buildPetitionHandler, int bloque, int hilo, int intPasoEjecucion, string clientId, string archivoLogExtractoCliente)
-		{
-			try
-			{
-				if (dt.Rows.Count != 0)
-				{
-					Console.WriteLine(" - Almacenando log de excel");
-					Thread.CurrentThread.CurrentCulture = CultureInfo.CreateSpecificCulture("en-US");
-					XLWorkbook wb = new XLWorkbook();
-					wb.Worksheets.Add(dt, Nombre);
-					wb.SaveAs(ruta);
-				}
-			}
-			catch (Exception ex)
-			{
-				buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | CLIENTE: " + clientId + " | PASO " + (intPasoEjecucion) + ". Ocurrió un error generando el excel para este cliente: " + ex.Message + " - " + ex.InnerException, archivoLogExtractoCliente);
-				Console.WriteLine(" & ERROR generando excel para el cliente " + clientId + ": " + ex.Message + " - " + ex.InnerException);
-			}
-		}
-	}
+                }
+
+                if (account.IdAccountSource != null)
+                {
+                    infoLog["NoCuenta"] = account.IdAccountSource;
+
+                }
+
+                if (account.CustomerName != null)
+                {
+                    infoLog["NombreDelCliente"] = account.CustomerName;
+                }
+
+            }
+        }
+        private  void InitInfoLogGenericDataProducts(DataRow infoLog, DataTable dtSections)
+        {
+            if (dtSections != null)
+            {
+                string history = string.Empty;
+                List<string> products = new List<string>();
+                DataRow[] dr = dtSections.Select("VISIBILITY = 1 AND ID_STATEMENT_SECTION NOT IN (1,2,11) ");
+                foreach (DataRow item in dr)
+                {
+                    if (!item.Table.Columns.Contains("NM_NAME"))
+                    {
+                        foreach (DataColumn dc in item.Table.Columns)
+                        {
+                            history += "Nombre de columna->" + dc.ColumnName;
+                        }
+                    }
+
+                    products.Add(item["NM_NAME"].ToString());
+                }
+                if (products != null)
+                {
+                    StringBuilder description = new StringBuilder();
+                    infoLog["NoDeMercados"] = products.Count;
+
+                    if (products.Count > 0)
+                    {
+                        for (int i = 0; i < products.Count - 1; i++)
+                        {
+                            description.Append(products[i] + ", ");
+                        }
+
+                        description.Append(products[products.Count - 1]);
+                        infoLog["DescripcionDeLosMercados"] = description.ToString();
+
+                    }
+                }
+            }
+        }
+        private  void RenderReport(string cuenta,
+                                         ReportViewer report,
+                                         ParametrosExtracto parametrosExtracto,
+                                         int bloque,
+                                         int hilo,
+                                         BuildPetitionHandler buildPetitionHandler,
+                                         string archivoLogExtractoCliente, DataSourceMassiveProcess dataSourceMassiveProcess)
+        {
+            DateTime InicioGeneracion = DateTime.Now;
+            int intPasoEjecucion = 1;
+            byte[] renderedBytes = null;
+
+
+            DataRow infoLog = InitInfoLogGenericData();
+            DalCertificate dalCertificate = new DalCertificate();
+            string fileName = "";
+            try
+            {
+
+                buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | Cuenta: " + cuenta + " | PASO " + (intPasoEjecucion++) +
+                    ". Se consulta la información del cliente para generar el extracto mensual", archivoLogExtractoCliente);
+                infoLog["NoArchivosPDF"] = 1;
+                AccountHandler accountHandler = new AccountHandler();
+                ResultDB localResult = accountHandler.GetAccount(Convert.ToInt32(cuenta));
+                Account account = null;
+                account = (Account)localResult.result;
+                InitInfoLogGenericDataAccount(infoLog, account);
+                List<Parameter> parameters;
+                DataTable _dtAccountInformation = GetAcountInformationFull(Convert.ToInt32(cuenta), parametrosExtracto.FechaInicio, parametrosExtracto.FechaFin, "UM");
+              
+                SectionHandler sectionHandler = new SectionHandler();
+                DataTable dtSections = null;
+                dtSections = sectionHandler.GetSectionList(Convert.ToInt32(cuenta), parametrosExtracto.FechaInicio, parametrosExtracto.FechaFin);
+                parameters = getDataSourcesParameter(Convert.ToInt32(cuenta), parametrosExtracto.FechaInicio, parametrosExtracto.FechaFin);
+                DisclaimerHandler disclaimerHandler = new DisclaimerHandler();
+                DataTable _dtDisclaimers = disclaimerHandler.GetDisclaimerList(account, parametrosExtracto.FechaInicio, parametrosExtracto.FechaFin, "UM");
+                DataSourceHandler dataSourceHandler = new DataSourceHandler();
+                List<DataSource> datasources = parametrosExtracto.DataSources;
+
+                buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | CUENTA: " + cuenta + " | PASO " + (intPasoEjecucion++) +
+                ". Se obtuvieron los registros para generar el Extracto", archivoLogExtractoCliente);
+
+                report.LocalReport.DataSources.Clear();
+                foreach (DataSource datasource in datasources)
+                {
+                    DataTable dt = null;
+                    if (CheckSectionActive(datasource, dtSections))
+                    {
+                        dt = dataSourceHandler.GetData(datasource, parameters);
+                    }
+                    else
+                    {
+                        dt = new DataTable();
+
+                    }
+
+                    if (dt != null && dt.TableName != null)
+                    {
+                        dt.TableName = datasource.Name;
+                    }
+            
+                    datasource.Data = dt;
+                }
+
+                SetDataSources(report, datasources, _dtDisclaimers, dtSections, _dtAccountInformation);
+                SetReportParemeters(report, account, parametrosExtracto);
+                Random r = new Random();
+                var x = r.Next(0, 1000000);
+                string history = string.Empty;
+                string rad = x.ToString("000000");
+                SubreportProcessingEventHandler sr = new SubreportProcessingEventHandler((s, ev) => SetSubDataSource(s, ev, datasources, _dtDisclaimers, dtSections, _dtAccountInformation));
+                report.LocalReport.SubreportProcessing += sr;
+
+                string[] formatos = parametrosExtracto.Format.Split(',');
+                string ruta = string.Empty;
+                InitInfoLogGenericDataProducts(infoLog, dtSections);
+                foreach (string format in formatos)
+                {
+
+                    int ultimodiames = DateTime.DaysInMonth(parametrosExtracto.Month.Year, parametrosExtracto.Month.Month);
+                    string nombrearchivo = parametrosExtracto.Month.ToString("yyyyMM") + ultimodiames.ToString();
+                    string lowerFormat = format.ToLower();
+                    fileName = nombrearchivo +
+                        "" +
+                        rad +
+                        "_" +
+                        "Extracto"+
+                        "_"+
+                        account.IdAccountSource+
+                        "." + lowerFormat;
+
+                    fileName = fileName.Replace(" ", string.Empty);
+
+                    buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | CUENTA: " + cuenta + " | PASO " + (intPasoEjecucion++) +
+                        ". Comienza el renderizado del Extracto", archivoLogExtractoCliente);
+                    (renderedBytes, ruta) = RenderReport(report, fileName, parametrosExtracto, lowerFormat);
+                    System.IO.FileInfo file = new System.IO.FileInfo(ruta);
+                    file.Directory.Create();
+
+                    report.LocalReport.Refresh();
+                    //SE ESCRIBE EL Extracto EN LA RUTA DESTINO
+                    buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | Cuenta: " + cuenta + " | PASO " + (intPasoEjecucion++) +
+                        ". Escribiendo el Extracto en la ruta física especificada", archivoLogExtractoCliente);
+                    System.IO.File.WriteAllBytes(ruta, renderedBytes);
+                    buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | Cuenta: " + cuenta + " | PASO " + (intPasoEjecucion++) +
+                        ". Finaliza la creación del Extracto", archivoLogExtractoCliente);
+                    //SE ENVÍA LA INFORMACIÓN BÁSICA DEL Extracto A LA TABLA GENEREACION_ExtractoS
+                    buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | Cuenta: " + cuenta + " | PASO " + (intPasoEjecucion++) +
+                        ". Se envia la información del Extracto a la tabla de generación Extractos en base de datos", archivoLogExtractoCliente);
+                    dalCertificate.InsertCertificadoGeneradoXIdBuildPetition(parametrosExtracto.IdPeticion, "idCliente.ToString()", fileName, true);
+                    buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | Cuenta: " + cuenta + " | PASO " + (intPasoEjecucion++) +
+                        ". La información del Extracto quedó almacenada en la tabla generación Extractos de la base de datos", archivoLogExtractoCliente);
+                    buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | Cuenta: " + cuenta + " | PASO " + (intPasoEjecucion++) +
+                    ". Se envia la información del Extracto a la tabla de logs en base de datos", archivoLogExtractoCliente);
+                    InfoLogGenericManagement(parametrosExtracto, dalCertificate, fileName, infoLog, buildPetitionHandler, bloque, hilo, intPasoEjecucion, archivoLogExtractoCliente, cuenta);
+                    buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | Cuenta: " + cuenta + " | PASO " + (intPasoEjecucion++) +
+                        ". La información del Extracto quedó almacenada en la tabla logs de la base de datos", archivoLogExtractoCliente);
+                    buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | Cuenta: " + cuenta + " | PASO " + (intPasoEjecucion++) +
+                        ". Finaliza la generación del extracto para este cliente", archivoLogExtractoCliente);
+                }
+            }
+            catch (Exception ex)
+            {
+                InfoLogGenericManagement(parametrosExtracto, dalCertificate, fileName, infoLog, buildPetitionHandler, bloque, hilo, intPasoEjecucion, archivoLogExtractoCliente, cuenta, ex.Message);
+                buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | Cuenta: " + cuenta + " | PASO " + (intPasoEjecucion++) +
+                    ". Ocurrió un error generando el extracto para este cliente: " + ex.Message + " - " + ex.InnerException, archivoLogExtractoCliente);
+                Console.WriteLine(" & ERROR generando el Extracto para el crédito" + cuenta + ": " + ex.Message + " - " + ex.InnerException);
+
+
+
+            }
+        }
+
+        public  void InfoLogGenericManagement(ParametrosExtracto parametrosExtracto, DalCertificate dalCertificate, string fileName, DataRow infoLog, BuildPetitionHandler buildPetitionHandler, int bloque, int hilo, int intPasoEjecucion, string archivoLogExtractoCliente,string cuenta, string error = "")
+        {
+            try
+            {
+                infoLog["Error"] = error;
+                LogGenerico logGenerico = MapearDatosLogGenerico(parametrosExtracto.Type, parametrosExtracto.IdPeticion, parametrosExtracto.Identificador, fileName, infoLog);
+                dalCertificate.InsertarLogGenerico(logGenerico);
+            }
+            catch (Exception ex)
+            {
+                buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | Cuenta: " + cuenta + " | PASO " + (intPasoEjecucion++) +
+                    "Ocurrio un error en la inserción de extracto genérico: " + ex.Message, archivoLogExtractoCliente);
+            }
+
+        }
+
+
+        public  (byte[] Bytes, string Ruta) RenderReport(ReportViewer report, string fileName, ParametrosExtracto parametrosExtracto, string format = "pdf")
+        {
+            byte[] bytes = null;
+            string ruta = string.Empty;
+            switch (format)
+            {
+                case FileFormat.PDF:
+                    bytes = report.LocalReport.Render("PDF");
+                    ruta = parametrosExtracto.RutaGeneracionextractosPDF + @"\" + fileName;
+                    break;
+                case FileFormat.ExcelOpenXML:
+                    bytes = report.LocalReport.Render("Excel");
+                    ruta = parametrosExtracto.RutaGeneracionextractosExcel + @"\" + fileName;
+                    break;
+            }
+
+
+            return (bytes, ruta);
+        }
+
+
+
+
+        public  bool CheckSectionActive(DataSource datasource, DataTable dtSections)
+        {
+            try
+            {
+                bool isActive = true;
+                if (datasource.IdSection > 0)
+                {
+                    var sRow = (from row in dtSections.AsEnumerable()
+                                where row.Field<int>("ID_STATEMENT_SECTION") == datasource.IdSection
+                                select row).FirstOrDefault();
+                    bool visibility = sRow["VISIBILITY"].ToString().ToLower() == "1" || sRow["VISIBILITY"].ToString().ToLower() == "true";
+
+                    return visibility;
+                }
+
+                return isActive;
+            }
+            catch (Exception ex)
+            {
+                ErrorException objError = new ErrorException();
+                objError.ErrorHandler(ex, "BuilderHandler::CheckSectionActive", "Cuenta: No subministrada");
+                throw ex;
+            }
+        }
+        protected  List<Parameter> getDataSourcesParameter(int account, DateTime startDate, DateTime endDate)
+        {
+            try
+            {
+                List<Parameter> parameters = new List<Parameter>();
+                Parameter paramIdAcccount = new Parameter();
+                paramIdAcccount.name = ParemeterName.AccountSource;
+                paramIdAcccount.value = account;
+                paramIdAcccount.Type = System.Data.DbType.Int32;
+                Parameter paramStartDate = new Parameter();
+                paramStartDate.name = ParemeterName.StartDate;
+                paramStartDate.value = startDate;
+                paramStartDate.Type = System.Data.DbType.DateTime;
+                Parameter paramEndDate = new Parameter();
+                paramEndDate.name = ParemeterName.EndDate;
+                paramEndDate.value = endDate;
+                paramEndDate.Type = System.Data.DbType.DateTime;
+                parameters.Add(paramIdAcccount);
+                parameters.Add(paramStartDate);
+                parameters.Add(paramEndDate);
+                return parameters;
+            }
+            catch (Exception ex)
+            {
+                ErrorException objError = new ErrorException();
+                objError.ErrorHandler(ex);
+                return null;
+            }
+        }
+ 
+        private  LogGenerico MapearDatosLogGenerico(string tipoPeticion, int idPeticion, string identificador, string filename, DataRow infoLog)
+        {
+            return new LogGenerico
+            {
+                TipoPeticion = tipoPeticion,
+                IdPeticion = idPeticion.ToString(),
+                Identificador = identificador,
+                Campo1 = infoLog["TipoEnvio"].ToString(),
+                Campo2 = infoLog["NombreDeLaCuenta"].ToString(),
+                Campo3 = infoLog["NoCuenta"].ToString(),
+                Campo4 = infoLog["NombreDelCliente"].ToString().Trim(),
+                Campo5 = infoLog["NoArchivosPDF"].ToString(),
+                Campo6 = infoLog["NoArchivosTXT"].ToString(),
+                Campo7 = infoLog["NoDeMercados"].ToString().Trim(),
+                Campo8 = infoLog["DescripcionDeLosMercados"].ToString().Trim(),
+                Campo9 = infoLog["Error"].ToString().Trim()
+            };
+        }
+
+    
+        public  void CreateExcel(DataTable dt, string Nombre, string ruta, BuildPetitionHandler buildPetitionHandler, int bloque, int hilo, int intPasoEjecucion, string clientId, string archivoLogExtractoCliente)
+        {
+            try
+            {
+                if (dt.Rows.Count != 0)
+                {
+                    Console.WriteLine(" - Almacenando log de excel");
+                    Thread.CurrentThread.CurrentCulture = CultureInfo.CreateSpecificCulture("en-US");
+                    XLWorkbook wb = new XLWorkbook();
+                    wb.Worksheets.Add(dt, Nombre);
+                    wb.SaveAs(ruta);
+                }
+            }
+            catch (Exception ex)
+            {
+                buildPetitionHandler.EscribirLog(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " BLOQUE: " + string.Format("{0:000}", bloque) + " | HILO: " + string.Format("{0:000}", hilo) + " | CLIENTE: " + clientId + " | PASO " + (intPasoEjecucion) + ". Ocurrió un error generando el excel para este cliente: " + ex.Message + " - " + ex.InnerException, archivoLogExtractoCliente);
+                Console.WriteLine(" & ERROR generando excel para el cliente " + clientId + ": " + ex.Message + " - " + ex.InnerException);
+            }
+        }
+
+        public  void SetDataSources(Microsoft.Reporting.WinForms.ReportViewer viewer,
+            List<DataSource> datasources,
+            DataTable dtDisclaimers,
+            DataTable dtSections,
+            DataTable dtAccountInformation)
+        {
+            try
+            {
+                IList<string> dsNames = viewer.LocalReport.GetDataSourceNames();
+                foreach (string dsName in dsNames)
+                {
+                    DataTable dt = null;
+                    switch (dsName)
+                    {
+                        case Values.DisclaimerDataSourceName:
+                            dt = dtDisclaimers;
+                            break;
+                        case Values.StatementSectionDataSourceName:
+                            dt = dtSections;
+                            break;
+                        case Values.AccountInformationDataSourceName:
+                            dt = dtAccountInformation;
+                            break;
+                        default:
+                            try
+                            {
+                                dt = datasources.First(s => s.Name == dsName).Data;
+                            }
+                            catch
+                            {
+                                dt = new DataTable();
+                            }
+                            break;
+                    }
+
+                    if (dt == null)
+                    {
+                        dt = new DataTable();
+                    }
+
+                    ReportDataSource rds = new ReportDataSource(dsName, dt);
+                    viewer.LocalReport.DataSources.Add(rds);
+                }
+            }
+            catch (Exception ex)
+            {
+                ErrorException objError = new ErrorException();
+                objError.ErrorHandler(ex);
+            }
+        }
+
+        public  void SetSubDataSource(object sender, SubreportProcessingEventArgs e, List<DataSource> _datasources, DataTable _dtDisclaimers, DataTable _dtSections, DataTable _dtAccountInformation)
+        {
+            try
+            {
+                SetDataSources(e, _datasources, _dtDisclaimers, _dtSections, _dtAccountInformation);
+            }
+            catch (Exception ex)
+            {
+                ErrorException objError = new ErrorException();
+                objError.ErrorHandler(ex);
+            }
+        }
+        public  void SetReportParemeters(ReportViewer viewer, Account account, ParametrosExtracto parametrosExtracto)
+        {
+            List<ReportParameter> parameters = new List<ReportParameter>();
+            parameters.Add(new ReportParameter(ParemeterName.ReportStartDate, parametrosExtracto.FechaInicio.ToString("dd/MM/yyyy")));
+            parameters.Add(new ReportParameter(ParemeterName.ReportEndDate, parametrosExtracto.FechaFin.ToString("dd/MM/yyyy")));
+            if (parametrosExtracto.Type == "UM" && !account.EmailDelivery)
+            {
+                parameters.Add(new ReportParameter(ParemeterName.ReportShowLogo, "0"));
+            }
+            else
+            {
+                parameters.Add(new ReportParameter(ParemeterName.ReportShowLogo, "1"));
+            }
+
+            parameters.Add(new ReportParameter(ParemeterName.ReportShowChart, "1"));
+            parameters.Add(new ReportParameter(ParemeterName.ReportEmail, (account.EmailDelivery) ? "1" : "0"));
+            viewer.LocalReport.SetParameters(parameters);
+        }
+        public  void SetDataSources(SubreportProcessingEventArgs e,
+              List<DataSource> datasources,
+              DataTable dtDisclaimers,
+              DataTable dtSections,
+              DataTable dtAccountInformation)
+        {
+            try
+            {
+                IList<string> dsNames = e.DataSourceNames;
+                foreach (string dsName in dsNames)
+                {
+                    DataTable dt = null;
+                    switch (dsName)
+                    {
+                        case Values.DisclaimerDataSourceName:
+                            dt = dtDisclaimers;
+                            break;
+                        case Values.StatementSectionDataSourceName:
+                            dt = dtSections;
+                            break;
+                        case Values.AccountInformationDataSourceName:
+                            dt = dtAccountInformation;
+                            break;
+                        default:
+                            try
+                            {
+                                dt = datasources.First(s => s.Name == dsName).Data;
+                            }
+                            catch
+                            {
+                                dt = new DataTable();
+                            }
+                            break;
+                    }
+
+                    if (dt == null)
+                    {
+                        dt = new DataTable();
+                    }
+                    if (e.ReportPath == "Capa_v2")
+                    {
+                        Console.WriteLine("Capa_v2");
+                    }
+                    Microsoft.Reporting.WinForms.ReportDataSource rds = new Microsoft.Reporting.WinForms.ReportDataSource(dsName, dt);
+                    e.DataSources.Add(rds);
+                }
+            }
+            catch (Exception ex)
+            {
+                ErrorException objError = new ErrorException();
+                objError.ErrorHandler(ex);
+            }
+        }
+    
+    public  DataTable GetAcountInformationFull(int idAccount, DateTime startDate, DateTime endDate, string petitionType)
+        {
+            try
+            {
+                AccountDAO dao = new AccountDAO();
+                DataTable dtAccountInformation = dao.GetAccountDataTable(idAccount);
+                DataColumn colGenerateDate = new DataColumn("DT_BUILD_DATE", typeof(DateTime));
+                colGenerateDate.DefaultValue = DateTime.Now;
+                DataColumn colStartDate = new DataColumn("DT_START_DATE", typeof(DateTime));
+                colStartDate.DefaultValue = startDate;
+                DataColumn colEndDate = new DataColumn("DT_END_DATE", typeof(DateTime));
+                colEndDate.DefaultValue = endDate;
+                DataColumn colStatementType = new DataColumn("STATEMENT_TYPE");
+                switch (petitionType)
+                {
+                    case Values.AnnualPetitionType:
+                        colStatementType.DefaultValue = "Extracto Anual";
+                        break;
+                    case Values.ReprocessPetitionType:
+                        colStatementType.DefaultValue = "Extracto Mensual";
+                        break;
+                    case Values.DailyPetitionType:
+                        colStatementType.DefaultValue = "Informe de Portafolio";
+                        break;
+                    case Values.MonthlyPetitionType:
+                        colStatementType.DefaultValue = "Extracto Mensual";
+                        break;
+
+                    case Values.UnifiedMonthlyPetitionType:
+                        colStatementType.DefaultValue = "Extracto Unificado Mensual";
+                        break;
+                    default:
+                        colStatementType.DefaultValue = "Extracto Mensual";
+                        break;
+                }
+
+                dtAccountInformation.Columns.Add(colGenerateDate);
+                dtAccountInformation.Columns.Add(colStartDate);
+                dtAccountInformation.Columns.Add(colEndDate);
+                dtAccountInformation.Columns.Add(colStatementType);
+
+                return dtAccountInformation;
+            }
+            catch (Exception ex)
+            {
+                ErrorException objError = new ErrorException();
+                objError.ErrorHandler(ex, "BuilderHandler::GetAcountInformationFull", "Cuenta: " + idAccount);
+                throw ex;
+            }
+        }
+
+    }
 }
